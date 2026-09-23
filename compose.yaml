@@ -27,7 +27,7 @@ services:
   web:
     build: ./frontend
     ports:
-      - "${WEB_BIND:-127.0.0.1}:8080:80"
+      - "${WEB_BIND:-127.0.0.1}:6511:80"
     depends_on:
       - api
 volumes:
