@@ -7,3 +7,5 @@
 
 .oncall-list{display:flex;flex-direction:column;gap:9px;max-width:830px}.oncall-card{width:100%}.oncall-card-top{display:flex;justify-content:space-between;gap:12px}.oncall-mode{font-size:12px;font-weight:700;color:#375b71;background:#e8f1f6;padding:4px 8px;border-radius:5px}.missing-contact{color:#a33d34;font-size:13px}.oncall-card small{display:block;color:#526a7d}
 .import-preview{margin-top:14px;padding:12px;border:1px solid #a9c4d4;border-radius:8px;background:#f5fafc;font-size:12px}.import-preview p{margin:6px 0}.import-preview-list{max-height:135px;overflow:auto;margin:8px 0}.import-preview .quiet{margin-left:8px}
+
+.team-directory{padding:7px 23px}.team-directory-row{display:flex;align-items:center;gap:13px;width:100%;padding:15px 5px;text-align:left;color:inherit;background:#fff;border:0;border-bottom:1px solid #e5ebef}.team-directory-row:last-child{border-bottom:0}.team-directory-row:hover{background:#f4f8fb}.team-directory-copy{display:grid;gap:4px;flex:1}.team-directory-copy strong{font-size:14px}.team-directory-copy small{font-size:12px;color:#687d8d}.team-edit,.team-count{font-size:12px;color:#355b75}

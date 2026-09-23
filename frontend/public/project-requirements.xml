@@ -163,6 +163,12 @@
     <integration>Stage-one Teams Shifts spreadsheet export; direct API synchronization is not required.</integration>
     <futureDemandIntegration>Later, import time-stamped ServiceNow ticket or service-demand counts by region, skill/service, and local hour. Aggregate and review historical patterns to propose weight-profile changes; keep the approved weights versioned and manager-editable rather than changing published schedules automatically.</futureDemandIntegration>
   </architecture>
+  <todo release="after-0.02">
+    <item id="skills" priority="high">Add a dedicated Skills section where authorized managers create, edit, and retire skills; assign skills to people with optional qualification level, expiry date, and verification status; and select required skills on Coverage periods. Show qualified people and skill gaps during scheduling, and prevent unqualified assignments. Retiring a skill must preserve historical schedules.</item>
+    <item id="accounts" priority="high">Replace alpha administrator bootstrap with managed user accounts: invite or register employees, assign role and team permissions, recover access, deactivate accounts, and audit changes. Employees may edit their own availability only; managers can review and manage staff records.</item>
+    <item id="email-schedules" priority="high">Email published schedules and changed assignments to the affected people, with configurable delivery and reminders. Record send failures and avoid sending draft or private contact data to unauthorized recipients.</item>
+    <item id="teams-shifts-export" priority="high">Export published employee assignments as a Microsoft Teams Shifts import workbook using the current template and fixed worksheet column order. Map each employee to their Microsoft 365 work email and scheduling group, preserve local date/time formatting, validate shifts longer than 24 hours and the two-year future limit, and preview rows before download. Import adds data in Shifts; it does not edit or delete existing assignments. Reference: https://support.microsoft.com/en-us/teams/shifts/import-a-schedule-from-excel-to-shifts</item>
+  </todo>
   <openDecisions>
     <decision priority="pilot">Exact coverage counts, required skill combinations, shifts, breaks, and staffing data for both teams.</decision>
     <decision priority="pilot">Specific 1%-100% hourly coverage weights and headcounts for staffed and on-call requirements; confirm whether the Eastern-time weekend example applies to Team 1 or is only an illustrative policy.</decision>

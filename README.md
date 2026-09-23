@@ -1,4 +1,4 @@
-# Coverage Scheduler — version 0.02 (private alpha)
+# Coverage Scheduler — version 0.03 (private alpha)
 
 Copy `.env.example` to `.env`, choose local secrets, and run `docker compose up --build`. The web port binds to `0.0.0.0:8080` by default; open `http://<server-IP>:8080` from another device. Keep the alpha app behind your LAN/firewall while automatic administrator actions are enabled.
 
@@ -16,8 +16,20 @@ Actual call-outs, on-site standby, meal breaks, overtime/payroll, emergency exce
 
 The API and PostgreSQL remain inside Compose. Production deployment is rejected while alpha automatic admin is enabled.
 
+## Version 0.03
+
+The Teams page now shows all teams in one edit list without redundant team or week filters.
+
 ## Version 0.02
 
 The On-call contact list includes staffed and standby shifts in chronological vertical order, with handoff details and missing phone indicators. Casual staff can maintain positive availability on a person calendar and preview .ics imports (duplicates and unavailable-time conflicts) before applying. Export writes dated availability events. The import accepts dated VEVENT periods; recurring rules are rejected with an explanation. English Canadian text and formatting are centralized for the new contact view; broader interface translation remains future work.
 
 Version labels use 0.02 for the release; the frontend package uses semantic version 0.0.2. The database migration adds `available_windows` to Employee.
+
+## Next work (after 0.02)
+
+- Dedicated Skills section to manage qualifications, person assignments, and Coverage requirements.
+
+- Employee registration and account management, with role-bound self-service availability editing.
+- Email delivery of published schedules and changes, with delivery status.
+- Microsoft Teams Shifts Excel export from published assignments; map work email and scheduling group, validate the template and preview the workbook before download. Teams import adds entries rather than updating existing ones.
