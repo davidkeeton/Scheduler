@@ -1,0 +1,67 @@
+{
+  "schema_version": "0.1",
+  "synthetic": true,
+  "organization": "Pilot IT Operations",
+  "timezone": "America/Vancouver",
+  "assumptions": [
+    "Team 1 is staffed Monday-Friday 11:00-19:00; on-call covers 19:00-11:00 on weekdays and all weekend. Confirm this interpretation of 11-7.",
+    "The statement that no one on Team 1 is skilled for Team 1 was interpreted as no one on Team 1 is skilled for Team 2.",
+    "Coverage headcounts, hourly weight profiles, and exact on-call rotation lengths are not specified and remain unset. Every staffed and on-call coverage hour can carry a 0.01-1.00 weight, displayed as 1%-100%; 1.00 is most important.",
+    "The Eastern-time on-call priority bands are an illustrative Team 1 policy pending confirmation; America/Toronto represents Eastern local time across seasonal clock changes."
+  ],
+  "skills": [
+    {"id": "team1-support", "name": "Team 1 support"},
+    {"id": "team2-operations", "name": "Team 2 operations"}
+  ],
+  "coverage_weight_profiles": [],
+  "teams": [
+    {
+      "id": "team-1", "name": "Team 1", "coverage": [
+        {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "mode": "staffed", "start": "11:00", "end": "19:00"},
+        {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "mode": "on_call", "start": "00:00", "end": "11:00"},
+        {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "mode": "on_call", "start": "19:00", "end": "24:00"},
+        {"days": ["Sat", "Sun"], "mode": "on_call", "start": "00:00", "end": "24:00"}
+      ], "required_skill": "team1-support", "coverage_count": null,
+      "on_call_priority_bands_example": [
+        {"days": ["Sat", "Sun"], "start": "09:00", "end": "17:00", "time_zone": "America/Toronto", "priority": 1, "coverage_count": null, "weight": null},
+        {"days": ["Sat", "Sun"], "outside": "09:00-17:00", "time_zone": "America/Toronto", "priority": 2, "coverage_count": null, "weight": null},
+        {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "mode": "on_call", "priority": 3, "coverage_count": null, "weight": null}
+      ]
+    },
+    {
+      "id": "team-2", "name": "Team 2", "coverage": [
+        {"days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "mode": "staffed", "start": "00:00", "end_next_day": "00:00"}
+      ], "required_skill": "team2-operations", "coverage_count": null
+    }
+  ],
+  "employees": [
+    {"id":"E001","name":"Maya Chen","phone":"604-555-0101","team_id":"team-1","classification":"full_time","skills":["team1-support"]},
+    {"id":"E002","name":"Daniel Mercer","phone":"604-555-0102","team_id":"team-1","classification":"full_time","skills":["team1-support"]},
+    {"id":"E003","name":"Aisha Rahman","phone":"604-555-0103","team_id":"team-1","classification":"full_time","skills":["team1-support"]},
+    {"id":"E004","name":"Owen Patel","phone":"604-555-0104","team_id":"team-1","classification":"full_time","skills":["team1-support"]},
+    {"id":"E005","name":"Sofia Laurent","phone":"604-555-0105","team_id":"team-1","classification":"full_time","skills":["team1-support"]},
+    {"id":"E006","name":"Ethan Brooks","phone":"604-555-0106","team_id":"team-1","classification":"full_time","skills":["team1-support"]},
+    {"id":"E007","name":"Priya Nair","phone":"604-555-0107","team_id":"team-1","classification":"casual","skills":["team1-support"]},
+    {"id":"E008","name":"Lucas Romero","phone":"604-555-0108","team_id":"team-1","classification":"casual","skills":["team1-support"]},
+    {"id":"E009","name":"Amira Haddad","phone":"604-555-0109","team_id":"team-2","classification":"full_time","skills":["team2-operations","team1-support"]},
+    {"id":"E010","name":"Noah Singh","phone":"604-555-0110","team_id":"team-2","classification":"full_time","skills":["team2-operations","team1-support"]},
+    {"id":"E011","name":"Chloe Martin","phone":"604-555-0111","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E012","name":"Jasper Lee","phone":"604-555-0112","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E013","name":"Isabella Torres","phone":"604-555-0113","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E014","name":"Caleb Foster","phone":"604-555-0114","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E015","name":"Nina Kaur","phone":"604-555-0115","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E016","name":"Oliver Grant","phone":"604-555-0116","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E017","name":"Layla Wilson","phone":"604-555-0117","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E018","name":"Theo Nguyen","phone":"604-555-0118","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E019","name":"Grace Bennett","phone":"604-555-0119","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E020","name":"Samir Ali","phone":"604-555-0120","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E021","name":"Harper Collins","phone":"604-555-0121","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E022","name":"Mateo Rivera","phone":"604-555-0122","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E023","name":"Zoe Campbell","phone":"604-555-0123","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E024","name":"Arjun Desai","phone":"604-555-0124","team_id":"team-2","classification":"full_time","skills":["team2-operations"]},
+    {"id":"E025","name":"Ruby Ellis","phone":"604-555-0125","team_id":"team-2","classification":"casual","skills":["team2-operations"]},
+    {"id":"E026","name":"Miles Thompson","phone":"604-555-0126","team_id":"team-2","classification":"casual","skills":["team2-operations"]},
+    {"id":"E027","name":"Fatima Yusuf","phone":"604-555-0127","team_id":"team-2","classification":"casual","skills":["team2-operations"]},
+    {"id":"E028","name":"Ben Carter","phone":"604-555-0128","team_id":"team-2","classification":"casual","skills":["team2-operations"]}
+  ]
+}

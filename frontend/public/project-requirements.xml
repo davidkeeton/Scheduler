@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectRequirements name="Workforce Coverage Scheduler" version="0.1" date="2026-09-23" status="working-draft">
+  <purpose>
+    Build a useful scheduler for the first company's two IT teams while making organization-specific rules configurable for other businesses. The system proposes schedules, exposes shortages and tradeoffs, and leaves publishing and exceptional decisions to authorized people.
+  </purpose>
+  <principles>
+    <principle id="P1">Teams have their own complete schedules, coverage requirements, and configurable rules.</principle>
+    <principle id="P2">Never silently violate a hard eligibility or assignment rule. A coverage target can remain unmet; show partial coverage accurately.</principle>
+    <principle id="P3">Cross-team moves must show eligibility and the effect on both source and destination coverage.</principle>
+    <principle id="P4">Automate roster proposals and repair suggestions while preserving manager control, permissions, and an audit trail.</principle>
+    <principle id="P5">Show the best recommendation and primary reason first; reveal alternatives and rule details on demand.</principle>
+    <principle id="P6">The first company's settings are configuration, not special-case code.</principle>
+    <principle id="P7">Cross-coverage eligibility can depend on agreements and department boundaries as well as qualifications. Policies are versioned, scoped, and explainable.</principle>
+    <principle id="P8">Schedule by named local time zone and retain exact instants; handle clock changes according to the location's current time-zone rules.</principle>
+  </principles>
+  <scope>
+    <stageOne>
+      <item>Two IT teams, approximately 20 employees, with independent schedules and cross-team skill coverage.</item>
+      <item>Configurable staffed shifts and on-call coverage, including limits on continuous on-call assignment.</item>
+      <item>Generate draft rosters, allow authorized manual edits, show shortages, and publish schedules.</item>
+      <item>Compare a small configured set of candidate shift lengths/patterns and explain which covers the weighted demand best under availability and hard limits.</item>
+      <item>Vacation and other unavailability, including optional weekend endcaps around weekday vacation.</item>
+      <item>Manager-initiated assignment moves and swaps; explain the effect before approval.</item>
+      <item>Employee schedule view, scheduler view, administration, and role-scoped access.</item>
+      <item>Alpha-only automatic sign-in as a seeded master administrator, recreated after database resets; no manual account setup during the first build.</item>
+      <item>Published-schedule on-call lookup answering who is on call tonight, with coverage hours, team, role, and approved contact details; exportable offline.</item>
+      <item>Spreadsheet export suitable for importing published shifts into Microsoft Teams Shifts; verify the target template during implementation.</item>
+      <item>Spreadsheet-like roster, calendar view, coverage indicators, onboarding templates, import validation, and change history.</item>
+    </stageOne>
+    <later>
+      <item>More teams, regions, stations, projects, assets, travel distances, radii, travel zones, and geography-aware ranking or eligibility.</item>
+      <item>Broader automatic discovery of novel and irregular multiweek rotations for large workforces; retain the ability to configure and assign known multiweek patterns before that automation exists.</item>
+      <item>Employee-initiated swaps, notifications and acknowledgement workflows, richer emergency coverage handling.</item>
+      <item>Pay rates, premiums, holiday/payroll calculations, payroll administrator workflows and integrations with payroll, SAP, NetSuite, or other systems.</item>
+      <item>Public business signup and isolated organizations; optional private deployments. Federation between independent instances only if a real use case emerges.</item>
+      <item>Historical-demand prediction or assisted rule setup only after enough reliable data and a specific benefit are established.</item>
+      <item>Manager/admin rules builder with enable/disable switches and readable if/then conditions, similar in feel to Outlook rules.</item>
+    </later>
+  </scope>
+  <pilotConfiguration illustrative="true">
+    <team id="team-1" name="Team 1">
+      <coverage weekdays="Monday-Friday" staffed="07:00-23:00" onCall="23:00-07:00" weekend="on-call throughout" timezone="organization-configured" />
+      <note>Interpretation of the original 7-11 and 11-7 shorthand as 7 a.m.-11 p.m. and 11 p.m.-7 a.m. needs confirmation during pilot setup.</note>
+    </team>
+    <team id="team-2" name="Team 2">
+      <coverage days="every day" staffed="24 hours" />
+    </team>
+    <note>Coverage counts, required skill combinations, exact shifts, breaks, and employee data remain configurable pilot inputs.</note>
+  </pilotConfiguration>
+  <domainModel>
+    <entity name="Organization">Owns configuration and data; designed for isolation between businesses.</entity>
+    <entity name="Region">Scopes scheduling access and future geographic coverage.</entity>
+    <entity name="Location">Shift work site or station; employee home base and eligible locations can be recorded from the start.</entity>
+    <entity name="Team">Own coverage windows, priorities, roster, and transfer policies.</entity>
+    <entity name="Department">Optional organizational grouping for coverage and movement boundaries, such as grocery, produce, bakery, cashier, or online fulfillment.</entity>
+    <entity name="Employee">Stable external employee ID, employment classification (including full-time and casual), contact visibility, home team/base, availability, preferences, seniority, and memberships.</entity>
+    <entity name="EmploymentClassification">Organization-defined classification with configurable scheduling targets and eligibility rules; initial examples are full-time and casual.</entity>
+    <entity name="EmploymentGroup">Optional bargaining unit, agreement, or other policy membership applying to an employee or assignment.</entity>
+    <entity name="CoveragePolicy">Versioned organization-defined rules scoped to teams, departments, roles, employment groups, locations, and effective dates; distinguish prohibitions, approvals, and preferences.</entity>
+    <entity name="Qualification">User-defined skill, role, certification, or experience requirement; examples include team lead, technician, driver, electrician, apprentice, EMR, PCP, and ACP.</entity>
+    <entity name="ShiftPattern">Configurable shift durations, start-time windows, days on/off, and repeating multiweek cycles. Examples include 8-hour five-day weeks, 10-hour four-day weeks, 12-hour patterns, and irregular four-week rotations.</entity>
+    <entity name="OnCallShift">An assignable shift with start/end, qualifications, coverage target, location or service time zone, priority band, and scheduling weight; uses the same assignment and publication lifecycle as staffed shifts.</entity>
+    <entity name="CoverageRequirement">Time window, location or service region, target number, required qualification combinations or distinct slots, and a time-varying coverage weight.</entity>
+    <entity name="CoverageWeightProfile">Versioned 0.01-1.00 weights by service region, local day and time interval, team, and optional skill/coverage requirement. Hourly intervals are supported initially; finer granularity can be added later.</entity>
+    <entity name="Assignment">Employee, shift or on-call interval, team, location, draft/published status, and change history.</entity>
+    <entity name="Absence">Vacation and other unavailability, with optional adjacent-weekend on-call exclusion.</entity>
+    <entity name="AccessGrant">Role and organization/region/team scope for viewing, editing, approving, and publishing.</entity>
+  </domainModel>
+  <scheduling>
+    <timeRules>
+      <rule>Each location has an IANA time-zone identifier. Recurring coverage windows are defined in that location's local wall-clock time; generated assignments store both local display times and UTC instants.</rule>
+      <rule>Measure continuous work, on-call limits, overlap, and rest in actual elapsed minutes. Display scheduled wall-clock hours separately where they differ.</rule>
+      <rule>At a one-hour spring transition, a local midnight-to-midnight coverage day spans 23 elapsed hours; at a one-hour fall transition it spans 25. The roster must cover every real minute, including both occurrences of a repeated hour.</rule>
+      <rule>Reject a manually entered nonexistent local time during a forward jump with a clear correction prompt. Require an explicit first or second occurrence when an entered local time is ambiguous during a backward jump.</rule>
+      <rule>When a jurisdiction abolishes or changes clock shifts, use updated time-zone data for future schedule generation. Do not hard-code recurring March/November adjustments or retroactively change published assignment instants without review.</rule>
+    </timeRules>
+    <hardRules>
+      <rule>Do not assign an unavailable employee or overlap incompatible assignments.</rule>
+      <rule>Check every required qualification and any validity or eligibility constraints for a coverage slot.</rule>
+      <rule>Respect configured continuous on-call limits, assignment limits, rest rules, and future geographic limits when enabled.</rule>
+      <rule>Respect authorization and transfer policies; no cross-team change is published without required approval.</rule>
+      <rule>Honor applicable cross-coverage restrictions from employment groups or agreements, including department-to-department prohibitions, even when an employee has the required skill.</rule>
+    </hardRules>
+    <targetsAndPreferences>
+      <rule>Maximize coverage without falsely marking partial coverage complete; report required versus assigned people and slots.</rule>
+      <rule>Apply configurable relative weights from 0.01 to 1.00 to every staffed and on-call coverage interval, displayed as 1% to 100%. Weights can vary by hour, region, day, team, and requirement. A weight of 1.00 is highest scheduling importance and 0.01 is lowest. No weight may override a hard eligibility rule.</rule>
+      <rule>Score a proposed shift against the weighted coverage it actually supplies in each interval. A shift spanning several hours can therefore contribute differently in each hour; do not give it one flat score that hides a busy or uncovered interval.</rule>
+      <rule>When comparing schedules, account for both the required headcount/skill deficit and the interval weight. Report ordinary coverage counts alongside weighted coverage so low-weight gaps remain visible.</rule>
+      <rule>Compare feasible shift durations and patterns against required coverage, qualified employee availability, configured limits, and business preferences. A preferred 4x10 pattern may lose to 8x5 or a 12-hour pattern when the latter yields better feasible coverage.</rule>
+      <rule>Score candidate patterns by interval coverage weights, unmet coverage, staffing use, fairness, and business preference; show the principal tradeoffs rather than treating the preferred pattern as mandatory.</rule>
+      <rule>Rank eligible cross-cover candidates using configurable weights for fewer assigned shifts, minimum-shift targets, seniority, home team, and later travel.</rule>
+      <rule>Apply configurable shift targets and ranking preferences by employment classification; do not assume casual employees have the same shift commitment as full-time employees.</rule>
+      <rule>Distribute nights, weekends, holidays, and on-call fairly according to organization-defined policy.</rule>
+      <rule>Prefer moves from teams with surplus or lower coverage priority, but allow authorized proposals that leave a visible source shortage when policy permits.</rule>
+    </targetsAndPreferences>
+    <recommendation>Present the best eligible candidate with a short reason and before/after coverage for both teams. Expand for alternatives and complete rule explanation.</recommendation>
+    <policyEvaluation>Evaluate qualification, availability, agreement/policy scope, and assignment limits before ranking. Report a plain-language reason when a candidate is excluded, and retain the policy version used for each proposal.</policyEvaluation>
+    <onCallPriorityExample>For the pilot, weekend 09:00-17:00 Eastern is priority 1; other weekend on-call hours are priority 2; weekday on-call hours are priority 3. These are starting weight-profile bands, not a restriction to three levels or a single weight for a whole shift. Each hour can have its own 0.01-1.00 weight and required headcount. Priority 1 denotes the highest priority. The displayed percentage expresses scheduling importance, not the probability that coverage will be achieved. Use the named Eastern time zone rather than a fixed EST offset.</onCallPriorityExample>
+    <geographicExample>For Canada-wide support, local business hours in multiple regions may receive high weights. A busy Eastern morning may carry a higher weight than another region's corresponding hour. Convert regional local windows to exact instants before combining their coverage demands.</geographicExample>
+    <rotationExample>A four-week employee rotation may specify seven working days in week 1, six in week 2, five in week 3, and week 4 off. Store the complete cycle and its phase for each participating employee. Validate actual hours, rest, and applicable agreements rather than inferring that the example is legal or desirable everywhere.</rotationExample>
+    <example>For a requirement of one team lead and one technician, a single qualified person cannot fill both distinct-person slots unless explicitly permitted by the configured requirement; report 1 of 2 if only one slot is staffed.</example>
+    <example>A grocery employee may be eligible to cover produce while an otherwise skilled bakery employee is barred from the same move by an applicable agreement. The exact restriction is customer-configured, not built into the product.</example>
+  </scheduling>
+  <workflows>
+    <workflow name="Alpha bootstrap">On a fresh or reset database, seed the pilot organization and master administrator. In explicitly enabled private alpha mode, open the application already signed in as that administrator.</workflow>
+    <workflow name="Roster">Configure coverage, generate draft, inspect gaps and proposed shifts, edit or request transfers, approve, publish, export.</workflow>
+    <workflow name="Absence">Record or approve vacation/unavailability, recalculate affected coverage, propose eligible replacements.</workflow>
+    <workflow name="Urgent gap">Mark sick, injured, departed, or otherwise unavailable; show affected published coverage and ranked repair proposals for authorized action.</workflow>
+    <workflow name="Cross-team move">Evaluate skill and availability; compare source/destination before and after; obtain permissions/approval; record reason and outcome.</workflow>
+    <workflow name="On-call lookup">Read only from published assignments; show current and upcoming contacts within permitted visibility; export.</workflow>
+    <workflow name="Vacation weekend protection">When weekday vacation is requested, optionally mark the adjacent weekends unavailable for on-call without counting them as vacation days. Show affected published assignments and replacement proposals during approval.</workflow>
+    <workflow name="Coverage request and acknowledgement">Send a proposed urgent assignment to eligible employees with a response deadline. Treat it as pending until accepted and confirmed; notify the affected person on publication and escalate unacknowledged short-notice changes under configurable policy.</workflow>
+    <workflow name="Future coverage change">Create a future-dated version of customer coverage requirements; compare capacity and candidate shift patterns against existing commitments; edit a replacement draft, coordinate cross-team approvals, review changed assignments and notice, then publish the new roster.</workflow>
+  </workflows>
+  <interfaces>
+    <view name="Employee">Personal schedule, next shift and on-call status, availability and vacation information as permitted.</view>
+    <view name="Scheduler">Spreadsheet-like weekly roster and timeline calendar with drag-and-drop creation, movement, and resizing of staffed and on-call shifts; gaps, proposals, editable drafts, scoped teams/regions, and publication controls.</view>
+    <interaction name="Shift editing">Drag across a person/time grid to create a shift; drag an assignment to another person or time; resize edges to change duration. Before committing, show local-time start/end, affected coverage and weight by interval, and any hard-rule violation or cross-team approval requirement. Permit undo before publish and provide precise form or keyboard editing for accessibility and fine adjustments.</interaction>
+    <visualDesign>
+      <rule>Use a calm, low-glare neutral and restrained pastel palette for navigation, forms, and ordinary controls. Avoid using schedule-status red, green, yellow, and orange as general site accent colors.</rule>
+      <rule>Reserve red, green, yellow, and orange for schedule coverage and attention states. Define their exact meanings in a persistent legend and apply them consistently across grid, calendar, and summaries.</rule>
+      <rule>Use stronger contrast only where attention or an action is required. Keep text, icons, grid boundaries, and selected states readable against their backgrounds in both normal and dense schedule views.</rule>
+      <rule>Never convey coverage state by color alone: show required/assigned counts, short labels or icons, and accessible descriptions. Verify text contrast and distinguishability for color-vision differences.</rule>
+    </visualDesign>
+    <view name="Organization admin">People, qualifications, teams, locations, coverage rules, import, roles, and access settings.</view>
+    <view name="Policy admin">Authorized configuration and effective-dated review of employment groups, cross-coverage permissions, restrictions, and approval rules.</view>
+    <view name="Rules builder" phase="later">Guided conditions and actions with on/off switches, scope, priority, explanation, and preview of affected assignments; available to managers or admins according to permissions.</view>
+    <view name="Payroll admin" phase="later">Separate access to approved work records, pay settings, exports, and payroll integration.</view>
+    <design>Use progressive disclosure so ordinary scheduling screens do not overwhelm managers with optimization settings.</design>
+  </interfaces>
+  <onboarding>
+    <format>Downloadable Excel workbook with separate sheets and equivalent CSV templates for people (including employment classification), teams, roles/skills, qualifications, shift patterns, coverage requirements, availability, and existing assignments.</format>
+    <behavior>Provide examples and field definitions; validate each row; preview the result and errors before saving; use stable employee IDs for repeat imports.</behavior>
+  </onboarding>
+  <architecture proposed="true">
+    <frontend>React with TypeScript.</frontend>
+    <backend>Python with Django and a separate scheduling service or worker using OR-Tools.</backend>
+    <rules>Use structured, versioned policy records evaluated by the scheduling service. Keep stable rule IDs, enable/disable state, scope, precedence, and effective dates so a guided rules builder can be added later. Add tested extension points for exceptional customer rules; avoid unrestricted user-authored code in the initial product.</rules>
+    <database>PostgreSQL with migrations and organization-scoped data.</database>
+    <deployment>Docker Compose for initial private deployment; later public service can use the same application components with scalable infrastructure.</deployment>
+    <authentication>Gate automatic master-admin sign-in behind an explicit alpha configuration setting and private deployment boundary. Reject that mode in a public/production configuration. Preserve the authorization model so normal accounts and sign-in can replace bootstrap mode without changing scheduling permissions.</authentication>
+    <integration>Stage-one Teams Shifts spreadsheet export; direct API synchronization is not required.</integration>
+    <futureDemandIntegration>Later, import time-stamped ServiceNow ticket or service-demand counts by region, skill/service, and local hour. Aggregate and review historical patterns to propose weight-profile changes; keep the approved weights versioned and manager-editable rather than changing published schedules automatically.</futureDemandIntegration>
+  </architecture>
+  <openDecisions>
+    <decision priority="pilot">Exact coverage counts, required skill combinations, shifts, breaks, and staffing data for both teams.</decision>
+    <decision priority="pilot">Specific 1%-100% hourly coverage weights and headcounts for staffed and on-call requirements; confirm whether the Eastern-time weekend example applies to Team 1 or is only an illustrative policy.</decision>
+    <decision priority="pilot">Candidate shift durations, permitted start times, weekly/rotation hour limits, and whether v0.1 compares complete pattern options or only fills a manager-selected pattern.</decision>
+    <decision priority="later">Notification channels, short-notice thresholds, acknowledgement deadlines, escalation recipients, and employee response workflow.</decision>
+    <decision priority="later">How to generate novel multiweek rotations automatically, including search boundaries, explainability, and performance for large organizations.</decision>
+    <decision priority="later">ServiceNow demand measure, region/service mapping, lookback period, smoothing, normalization to the 0.01-1.00 scale, and approval of suggested weight changes.</decision>
+    <decision priority="pilot">Definition of continuous on-call duration, total-hours limits, rest periods, and weekend segmentation.</decision>
+    <decision priority="pilot">Specific permission and approval matrix for manager, team lead, scheduler, and organization admin; who may accept a source-team shortage.</decision>
+    <decision priority="pilot">Ranking weights, minimum shift targets, seniority policy, and coverage priority between teams.</decision>
+    <decision priority="pilot">Whether full-time and casual classifications change minimum or maximum shifts, guaranteed hours, availability expectations, or ranking priority in the first deployment.</decision>
+    <decision priority="pilot">Which policy dimensions are required for the IT pilot and which can remain available in the model for other organizations.</decision>
+    <decision priority="pilot">For shifts crossing a clock transition, confirm operational handoff and on-call segment policy; payroll treatment of the extra or missing hour remains a later payroll decision.</decision>
+    <decision priority="later">Customer-specific agreement interpretation and exception workflows; configure from an approved policy supplied by the customer rather than inferring legal or union terms.</decision>
+    <decision priority="later">Rules-builder vocabulary, supported condition groups, precedence/conflict handling, draft testing, and manager versus admin authority to activate rules.</decision>
+    <decision priority="pilot">Employee contact fields and who may view or export them.</decision>
+    <decision priority="pilot">Exact Microsoft Teams Shifts spreadsheet fields and import behavior.</decision>
+    <decision priority="before-public-release">Replace alpha automatic sign-in with normal organization/user onboarding, authentication, and appropriate administrator recovery.</decision>
+    <decision priority="later">Geographic eligibility, travel costs, asset dependencies, payroll rules, public signup, and federation policy.</decision>
+  </openDecisions>
+  <pilotAcceptance>
+    <test>Import a representative approximately 20-person dataset and generate a four-week draft for two independently configured teams.</test>
+    <test>Show fully covered and partially covered requirements by time and qualification without violating hard rules.</test>
+    <test>Apply vacation and an urgent sick call, then propose explainable eligible repairs across teams with source/destination impact.</test>
+    <test>Publish a reviewed roster and export the correct tonight-on-call lookup and Teams Shifts spreadsheet.</test>
+    <test>Generate and display coverage across a clock transition in a zone that observes one, and in a zone that no longer changes clocks; verify elapsed-minute totals and no missing or duplicate assignment interpretation.</test>
+  </pilotAcceptance>
+</projectRequirements>
