@@ -16,6 +16,7 @@ class Employee(models.Model):
     skills = models.JSONField(default=list)
     preferences = models.JSONField(default=dict)
     availability = models.JSONField(default=list)
+    available_windows = models.JSONField(default=list)
 
 class CoverageSlot(models.Model):
     team = models.ForeignKey(Team, on_delete=models.CASCADE)

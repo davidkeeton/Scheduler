@@ -50,3 +50,31 @@ class SchedulingApiTests(TestCase):
         lookup = self.client.get('/api/oncall?team=team-1&at=2026-09-21T08:00:00Z')
         self.assertEqual(200, lookup.status_code)
         self.assertTrue(lookup.json()['people'])
+
+    def test_oncall_lists_staffed_and_standby_contacts_in_time_order(self):
+        team = Team.objects.get(key='team-1')
+        employee = Employee.objects.filter(team=team).first()
+        start = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        Shift.objects.create(employee=employee, team=team, start=start, end=start+timedelta(hours=8), mode='staffed', batch='published', published=True)
+        Shift.objects.create(employee=employee, team=team, start=start+timedelta(hours=8), end=start+timedelta(hours=16), mode='on_call', batch='published', published=True)
+        response = self.client.get('/api/oncall?team=team-1&at=2027-01-01T01:00:00Z')
+        self.assertEqual(200, response.status_code)
+        people = response.json()['people']
+        self.assertEqual(['staffed', 'on_call'], [person['mode'] for person in people[:2]])
+        self.assertTrue(people[0]['current'])
+        self.assertFalse(people[1]['current'])
+
+    def test_publish_identifies_both_conflicting_shift_cards(self):
+        week = '2026-09-21'
+        response = self.post('generate', {'week': week})
+        self.assertEqual(200, response.status_code)
+        first = Shift.objects.filter(batch='draft', mode='staffed').first()
+        second = Shift.objects.create(employee=first.employee, team=first.team,
+                                      start=first.start, end=first.end,
+                                      mode=first.mode, batch='draft')
+        blocked = self.post('publish', {'week': week})
+        self.assertEqual(409, blocked.status_code)
+        ids = {item['id'] for item in blocked.json()['blocked_shifts']}
+        self.assertTrue({first.id, second.id}.issubset(ids))
+        self.assertIn('overlapping', next(item['reason'] for item in blocked.json()['blocked_shifts'] if item['id'] == first.id))
+        self.assertFalse(Shift.objects.filter(pk=first.id, published=True).exists())

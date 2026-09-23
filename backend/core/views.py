@@ -61,7 +61,7 @@ def state(request):
     names = {e.id: e.name for e in Employee.objects.all()}
     return JsonResponse({'week': monday.isoformat(), 'batch': batch, 'timezone': 'America/Vancouver', 'rule_profile': 'BC pilot; home/mobile standby assumed', 'advisories': [{'code': n['code'], 'message': f"{names.get(n['employee_id'], 'Employee')}: {n['message']}"} for n in notices],
         'teams': [{'key': t.key, 'name': t.name, 'skill': t.skill, 'coverage_template': t.coverage_template, 'preferences': t.preferences} for t in Team.objects.order_by('key')],
-        'employees': [{'key': e.key, 'name': e.name, 'phone': e.phone, 'team': e.team.key, 'classification': e.classification, 'skills': e.skills, 'preferences': e.preferences, 'availability': e.availability} for e in Employee.objects.select_related('team').order_by('key')],
+        'employees': [{'key': e.key, 'name': e.name, 'phone': e.phone, 'team': e.team.key, 'classification': e.classification, 'skills': e.skills, 'preferences': e.preferences, 'availability': e.availability, 'available_windows': e.available_windows} for e in Employee.objects.select_related('team').order_by('key')],
         'coverage': coverage, 'shifts': [{'id': s.id, 'employee': s.employee.key, 'team': s.team.key, 'start': s.start.isoformat(), 'end': s.end.isoformat(), 'mode': s.mode, 'published': s.published, 'cross_team': s.employee.team_id != s.team_id} for s in shifts]})
 
 def make_week_coverage(monday):
@@ -129,6 +129,16 @@ def preference_cost(employee, proposed, existing):
     return cost
 
 def unavailable(employee, proposed):
+    # Casual availability is positive: once any periods are supplied, an entire
+    # proposed shift must fit inside their union. Empty retains alpha behavior.
+    if employee.classification == 'casual' and employee.available_windows:
+        intervals = sorted((parsed_time(p['start']), parsed_time(p['end'])) for p in employee.available_windows)
+        cursor = proposed.start
+        for start, end in intervals:
+            if start <= cursor < end: cursor = max(cursor, end)
+            if cursor >= proposed.end: break
+        if cursor < proposed.end:
+            return True
     for period in employee.availability:
         try:
             if parsed_time(period['start']) < proposed.end and parsed_time(period['end']) > proposed.start: return True
@@ -227,13 +237,14 @@ def person(request):
         name = str(data['name']).strip()
         target_team = Team.objects.get(key=data['team'])
         skills, preferences, availability = data.get('skills',[]), data.get('preferences',{}), data.get('availability',[])
-        if not name or not isinstance(skills,list) or not isinstance(preferences,dict) or not isinstance(availability,list): raise ValueError()
-        for period in availability:
+        available_windows = data.get('available_windows',[])
+        if not name or not isinstance(skills,list) or not isinstance(preferences,dict) or not isinstance(availability,list) or not isinstance(available_windows,list): raise ValueError()
+        for period in [*availability, *available_windows]:
             if parsed_time(period['start']) >= parsed_time(period['end']): raise ValueError()
         record, _ = Employee.objects.get_or_create(key=key, defaults={'name': name, 'phone': '', 'classification': 'casual', 'team': target_team})
         record.name, record.phone, record.team = name, str(data.get('phone','')).strip(), target_team
         record.classification, record.skills = str(data.get('classification','casual')), skills
-        record.preferences, record.availability = preferences, availability
+        record.preferences, record.availability, record.available_windows = preferences, availability, available_windows
         record.save()
     except (KeyError, ValueError, TypeError, Team.DoesNotExist): return error('Invalid person details, skills or availability')
     return state_with_week(request, data.get('week') or date.today())
@@ -249,10 +260,31 @@ def publish(request):
         if not draft.exists(): return error('Generate a draft for this week first')
         scheduled = list(Shift.objects.filter(batch='draft', start__lt=ending, end__gt=beginning).select_related('employee','team'))
         surrounding = list(Shift.objects.filter(batch='published', start__lt=ending+timedelta(days=2), end__gt=beginning-timedelta(days=2)).exclude(start__gte=beginning, start__lt=ending))
+        blocked = {}
+        def mark(item, reason):
+            blocked.setdefault(item.id, set()).add(reason)
         for item in scheduled:
-            if item.team.skill not in item.employee.skills or unavailable(item.employee,item): return error(f'Cannot publish: {item.employee.name} is ineligible or unavailable')
-            issue = placement_issue(item, [s for s in scheduled if s.employee_id == item.employee_id and s.pk != item.pk] + [s for s in surrounding if s.employee_id == item.employee_id])
-            if issue: return error(f'Cannot publish: {item.employee.name}: {issue}')
+            if item.team.skill not in item.employee.skills: mark(item, 'Required team qualification is missing')
+            if unavailable(item.employee, item): mark(item, 'Employee is unavailable during this shift')
+            issue = placement_issue(item, [])
+            if issue: mark(item, issue)
+            for other in surrounding:
+                if other.employee_id == item.employee_id:
+                    issue = placement_issue(item, [other])
+                    if issue: mark(item, issue + ' (adjacent published week)')
+        for index, item in enumerate(scheduled):
+            for other in scheduled[index+1:]:
+                if other.employee_id != item.employee_id: continue
+                # Single-shift issues were collected above; only mark both sides
+                # when the combination is the blocker.
+                if placement_issue(item, []) or placement_issue(other, []): continue
+                issue = placement_issue(item, [other])
+                if issue:
+                    mark(item, issue)
+                    mark(other, issue)
+        if blocked:
+            details = [{'id': s.id, 'reason': '; '.join(sorted(blocked[s.id]))} for s in scheduled if s.id in blocked]
+            return JsonResponse({'error': f'Cannot publish: {len(details)} shift(s) need attention. Highlighted in Schedule.', 'blocked_shifts': details}, status=409)
         CoverageSlot.objects.filter(batch='published', start__gte=beginning, start__lt=ending).delete()
         Shift.objects.filter(batch='published', start__gte=beginning, start__lt=ending).delete()
         draft.update(batch='published')
@@ -264,12 +296,12 @@ def oncall(request):
         now = parsed_time(request.GET['at']) if request.GET.get('at') else datetime.now(timezone.utc)
         key = request.GET.get('team')
         team_filter = {'team__key': key} if key and key != 'all' else {}
-        upcoming = list(Shift.objects.filter(batch='published', mode='on_call', end__gt=now, **team_filter).select_related('employee','team').order_by('start')[:8])
+        upcoming = list(Shift.objects.filter(batch='published', end__gt=now, **team_filter).select_related('employee','team').order_by('start')[:8])
         near_shifts = list(Shift.objects.filter(batch='published', mode='on_call', end__gt=now, start__lt=now+timedelta(days=3), **team_filter).select_related('employee'))
         requirements = CoverageSlot.objects.filter(batch='published', mode='on_call', end__gt=now, start__lt=now+timedelta(days=3), **team_filter).select_related('team').order_by('start')
         gaps = []
         for slot in requirements:
             covered, _ = demand_coverage(slot, near_shifts)
             if covered < slot.required: gaps.append({'team': slot.team.key, 'start': slot.start.isoformat(), 'end': slot.end.isoformat(), 'missing': slot.required-covered})
-        return JsonResponse({'at': now.isoformat(), 'people': [{'id':s.id, 'name':s.employee.name,'phone':s.employee.phone,'team':s.team.key,'start':s.start.isoformat(),'end':s.end.isoformat(),'current':s.start<=now} for s in upcoming[:8]], 'gaps': gaps[:8]})
+        return JsonResponse({'at': now.isoformat(), 'people': [{'id':s.id, 'name':s.employee.name,'phone':s.employee.phone,'team':s.team.key,'start':s.start.isoformat(),'end':s.end.isoformat(),'current':s.start<=now, 'mode':s.mode} for s in upcoming[:8]], 'gaps': gaps[:8]})
     except ValueError: return error('Invalid time')
