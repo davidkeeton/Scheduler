@@ -13,6 +13,19 @@
     <principle id="P7">Cross-coverage eligibility can depend on agreements and department boundaries as well as qualifications. Policies are versioned, scoped, and explainable.</principle>
     <principle id="P8">Schedule by named local time zone and retain exact instants; handle clock changes according to the location's current time-zone rules.</principle>
   </principles>
+  <agreedProductModel>
+    <term name="Coverage">Demand: dated or repeating time periods, required headcount, skills, mode, team, and importance. No person is assigned here.</term>
+    <term name="Schedule">Independent employee shifts with person, team, mode, and actual start/end. One shift may satisfy several adjacent Coverage periods; interval intersections determine filled headcount and partial gaps.</term>
+    <rule>Coverage uses a repeating weekly team template and dated periods or exceptions. Editing a team template affects newly generated weeks; editing a dated period changes that draft only.</rule>
+    <rule>Team preferences define default day/night consistency, on-call grouping, weekend continuity, and preferred block length. Individual preferences can override team defaults. These are soft ranking factors unless a separate hard availability rule applies.</rule>
+    <rule>Do not stack full staffed shifts or full standby periods back-to-back by default. Allow staffed duty followed by home/mobile standby where policy permits; distinguish actual call-outs and count their work time for rest review.</rule>
+    <view name="Schedule">Default to one selected team, remember the selection, and make all-teams grouped view explicit. Add a searchable organization, region, department, and team hierarchy when scale requires it.</view>
+    <view name="Coverage">Create and edit dated demand periods and inspect partial gaps. Edit repeating patterns on the Teams page.</view>
+    <view name="Teams">Create and edit teams, default qualifications, recurring coverage, and team preferences.</view>
+    <view name="People">Create and edit contact details, home team, qualifications, classification, hard unavailability, and individual preferences.</view>
+    <view name="On-call">One-click separate view by team from published shifts; show current and next few contacts with names, phone numbers, start/end times, and unfilled periods.</view>
+    <rule>Draft schedule changes and Coverage changes must show affected gaps before publish. Published schedules remain stable until an authorized revised draft is published.</rule>
+  </agreedProductModel>
   <scope>
     <stageOne>
       <item>Two IT teams, approximately 20 employees, with independent schedules and cross-team skill coverage.</item>
@@ -67,6 +80,14 @@
     <entity name="AccessGrant">Role and organization/region/team scope for viewing, editing, approving, and publishing.</entity>
   </domainModel>
   <scheduling>
+    <bcEmploymentStandardsProfile jurisdiction="British Columbia" scope="pilot" source="https://www.bclaws.gov.bc.ca/civix/document/id/complete/statreg/00_96113_01">
+      <rule section="36(2)" enforcement="hard">Require eight consecutive hours free from work between worked shifts, including work performed during a call-out. Section 36(3) has an emergency exception; a documented variance or applicable exemption must be reviewed separately.</rule>
+      <rule section="36(1)" enforcement="review">Provide 32 consecutive hours free from work in each seven-day period or the required one-and-a-half-times pay for work during that period. Evaluate rolling seven-day windows and adjacent published weeks, not just a Monday-Sunday display.</rule>
+      <rule section="1(2)" enforcement="classification">Standby at an employer-designated place other than the employee's residence is deemed work. Home/mobile standby is not automatically work, but each actual call-out is work. Store standby location, response restrictions, call-out start/end, and exceptions.</rule>
+      <rule sections="32,39,40" enforcement="review">Track meal breaks, daily and weekly overtime, double time after 12 daily hours, and excessive hours detrimental to health or safety. Twelve hours is not a universal statutory maximum. Apply valid averaging agreements, collective agreements, exemptions, and variances by employee and effective date.</rule>
+      <operationalPolicy>Separately configure a stacking policy: avoid adjacent full staffed shifts and adjacent full standby periods. The alpha defines a full shift as eight hours and a single staffed shift limit of twelve hours as employer policy, not statute. Allow a staffed shift followed by home/mobile standby where the applicable agreement permits it; record call-outs and review actual rest and fatigue. This is an employer scheduling preference, not a BC statutory 12-hour cap.</operationalPolicy>
+      <publicationGate>Re-evaluate every assignment on generate, edit, and publish. Show hard failures and unresolved review items with rule IDs and source links; never claim full legal compliance when actual call-outs or agreement data are missing.</publicationGate>
+    </bcEmploymentStandardsProfile>
     <timeRules>
       <rule>Each location has an IANA time-zone identifier. Recurring coverage windows are defined in that location's local wall-clock time; generated assignments store both local display times and UTC instants.</rule>
       <rule>Measure continuous work, on-call limits, overlap, and rest in actual elapsed minutes. Display scheduled wall-clock hours separately where they differ.</rule>
