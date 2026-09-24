@@ -4,9 +4,10 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q, Max
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from core.models import Team, Employee, CoverageSlot, Shift
+from core.models import Team, Employee, CoverageSlot, Shift, Publication, ScheduleEvent, Absence, Callout
 from core.scheduling_rules import placement_issue, schedule_advisories
 
 PACIFIC = ZoneInfo('America/Vancouver')
@@ -31,6 +32,9 @@ def week_bounds(value):
     monday = day - timedelta(days=day.weekday())
     return monday, utc(monday, 0), utc(monday + timedelta(days=7), 0)
 
+def event_week(day):
+    return day-timedelta(days=day.weekday())
+
 def parsed_time(value):
     result = datetime.fromisoformat(value.replace('Z', '+00:00'))
     if result.tzinfo is None:
@@ -43,6 +47,20 @@ def demand_coverage(slot, shifts):
     minimum = min((len({s.employee_id for s in relevant if s.start <= a and s.end >= b}) for a, b in zip(cuts, cuts[1:])), default=0)
     covered_minutes = sum((b-a).total_seconds()/60 for a, b in zip(cuts, cuts[1:]) if len({s.employee_id for s in relevant if s.start <= a and s.end >= b}) >= slot.required)
     return minimum, round(covered_minutes)
+
+def callout_rest_issues(shifts, beginning, ending):
+    """Flag worked assignments too close to recorded actual call-out work."""
+    records = list(Callout.objects.filter(start__lt=ending+timedelta(days=2), end__gt=beginning-timedelta(days=2)))
+    issues = {}
+    for shift in shifts:
+        if shift.mode != 'staffed': continue
+        for call in records:
+            if call.employee_key != shift.employee.key: continue
+            if call.start < shift.end and call.end > shift.start:
+                issues[shift.id] = 'Worked shift overlaps recorded call-out work'
+            elif timedelta(0) <= shift.start-call.end < timedelta(hours=8) or timedelta(0) <= call.start-shift.end < timedelta(hours=8):
+                issues[shift.id] = 'Less than 8 hours between a worked shift and recorded call-out work'
+    return issues
 
 def state(request):
     try:
@@ -59,10 +77,16 @@ def state(request):
         coverage.append({'id': s.id, 'team': s.team.key, 'start': s.start.isoformat(), 'end': s.end.isoformat(), 'mode': s.mode, 'required': s.required, 'skill': s.required_skill or s.team.skill, 'weight': float(s.weight), 'covered': covered, 'covered_minutes': minutes, 'total_minutes': round((s.end-s.start).total_seconds()/60)})
     notices = schedule_advisories(shifts, beginning, ending)
     names = {e.id: e.name for e in Employee.objects.all()}
-    return JsonResponse({'week': monday.isoformat(), 'batch': batch, 'timezone': 'America/Vancouver', 'rule_profile': 'BC pilot; home/mobile standby assumed', 'advisories': [{'code': n['code'], 'message': f"{names.get(n['employee_id'], 'Employee')}: {n['message']}"} for n in notices],
+    rest_issues = callout_rest_issues(shifts, beginning, ending)
+    notices += [{'code': 'callout_rest', 'employee_id': s.employee_id, 'message': rest_issues[s.id]} for s in shifts if s.id in rest_issues]
+    published_weeks = sorted({(d.astimezone(PACIFIC).date()-timedelta(days=d.astimezone(PACIFIC).weekday())).isoformat() for d in CoverageSlot.objects.filter(batch='published').values_list('start', flat=True)} | {w.isoformat() for w in Publication.objects.values_list('week', flat=True)})
+    revisions = list(Publication.objects.filter(week=monday).values('id','revision','created_at','actor').order_by('-revision'))
+    absences = [{'id': a.id, 'employee': a.employee.key, 'name': a.employee.name, 'start': a.start.isoformat(), 'end': a.end.isoformat(), 'kind': a.kind, 'note': a.note, 'affected': [s.id for s in shifts if s.employee_id == a.employee_id and s.start < a.end and s.end > a.start]} for a in Absence.objects.filter(start__lt=ending, end__gt=beginning).select_related('employee')]
+    callouts = [{'id': c.id, 'shift': c.standby_shift_id, 'employee': c.employee_name, 'start': c.start.isoformat(), 'end': c.end.isoformat(), 'note': c.note} for c in Callout.objects.filter(start__lt=ending, end__gt=beginning).select_related('standby_shift__employee')]
+    return JsonResponse({'week': monday.isoformat(), 'published_weeks': published_weeks, 'revisions': revisions, 'absences': absences, 'callouts': callouts, 'batch': batch, 'timezone': 'America/Vancouver', 'rule_profile': 'BC pilot; home/mobile standby assumed', 'advisories': [{'code': n['code'], 'message': f"{names.get(n['employee_id'], 'Employee')}: {n['message']}"} for n in notices],
         'teams': [{'key': t.key, 'name': t.name, 'skill': t.skill, 'coverage_template': t.coverage_template, 'preferences': t.preferences} for t in Team.objects.order_by('key')],
         'employees': [{'key': e.key, 'name': e.name, 'phone': e.phone, 'team': e.team.key, 'classification': e.classification, 'skills': e.skills, 'preferences': e.preferences, 'availability': e.availability, 'available_windows': e.available_windows} for e in Employee.objects.select_related('team').order_by('key')],
-        'coverage': coverage, 'shifts': [{'id': s.id, 'employee': s.employee.key, 'team': s.team.key, 'start': s.start.isoformat(), 'end': s.end.isoformat(), 'mode': s.mode, 'published': s.published, 'cross_team': s.employee.team_id != s.team_id} for s in shifts]})
+        'coverage': coverage, 'shifts': [{'id': s.id, 'employee': s.employee.key, 'team': s.team.key, 'start': s.start.isoformat(), 'end': s.end.isoformat(), 'mode': s.mode, 'published': s.published, 'cross_team': s.employee.team_id != s.team_id, 'break_minutes': s.break_minutes, 'location': s.location, 'role': s.role, 'notes': s.notes} for s in shifts]})
 
 def make_week_coverage(monday):
     for team in Team.objects.all():
@@ -79,14 +103,14 @@ def generate(request):
     try: monday, beginning, ending = week_bounds(data['week'])
     except (ValueError, KeyError, TypeError): return error('Valid week required')
     with transaction.atomic():
-        CoverageSlot.objects.filter(batch='draft').delete()
-        Shift.objects.filter(batch='draft').delete()
+        CoverageSlot.objects.filter(batch='draft', start__gte=beginning, start__lt=ending).delete()
+        Shift.objects.filter(batch='draft', start__gte=beginning, start__lt=ending).delete()
         published = list(CoverageSlot.objects.filter(batch='published', start__gte=beginning, start__lt=ending))
         if published:
             for s in published:
                 CoverageSlot.objects.create(team=s.team, start=s.start, end=s.end, mode=s.mode, required=s.required, required_skill=s.required_skill, weight=s.weight, priority=s.priority, batch='draft')
             for s in Shift.objects.filter(batch='published', start__gte=beginning, start__lt=ending):
-                Shift.objects.create(team=s.team, employee=s.employee, start=s.start, end=s.end, mode=s.mode, batch='draft')
+                Shift.objects.create(team=s.team, employee=s.employee, start=s.start, end=s.end, mode=s.mode, batch='draft', break_minutes=s.break_minutes, location=s.location, role=s.role, notes=s.notes)
         else:
             make_week_coverage(monday)
             employees = list(Employee.objects.select_related('team'))
@@ -104,6 +128,7 @@ def generate(request):
                     proposal.save()
                     shifts[employee.id].append(proposal)
                     hours[employee.id] += (slot.end-slot.start).total_seconds()/3600
+    ScheduleEvent.objects.create(action='draft_generated', week=monday, detail={'from_published': bool(published)})
     return state_with_week(request, monday)
 
 def preference_cost(employee, proposed, existing):
@@ -139,6 +164,7 @@ def unavailable(employee, proposed):
             if cursor >= proposed.end: break
         if cursor < proposed.end:
             return True
+    if Absence.objects.filter(employee=employee, start__lt=proposed.end, end__gt=proposed.start).exists(): return True
     for period in employee.availability:
         try:
             if parsed_time(period['start']) < proposed.end and parsed_time(period['end']) > proposed.start: return True
@@ -161,6 +187,7 @@ def coverage(request):
             if data.get('delete'):
                 week = slot.start.astimezone(PACIFIC).date()
                 slot.delete()
+                ScheduleEvent.objects.create(action='coverage_deleted', week=event_week(week), detail={'coverage_id': data['id']})
                 return state_with_week(request, week)
         else:
             slot = CoverageSlot(batch='draft')
@@ -172,6 +199,7 @@ def coverage(request):
         slot.required_skill = data.get('skill') or slot.team.skill
         if slot.start >= slot.end or (slot.end-slot.start) > timedelta(hours=24) or slot.mode not in ('staffed','on_call') or not 0 <= slot.required <= 20 or not Decimal('.01') <= slot.weight <= Decimal('1'): raise ValueError()
         slot.save()
+        ScheduleEvent.objects.create(action='coverage_saved', week=event_week(slot.start.astimezone(PACIFIC).date()), detail={'coverage_id': slot.id})
     except (KeyError, ValueError, TypeError, ArithmeticError, Team.DoesNotExist, CoverageSlot.DoesNotExist): return error('Invalid draft coverage: check team, times, headcount and weight')
     return state_with_week(request, slot.start.astimezone(PACIFIC).date())
 
@@ -186,13 +214,18 @@ def shift(request):
             if data.get('delete'):
                 week = item.start.astimezone(PACIFIC).date()
                 item.delete()
+                ScheduleEvent.objects.create(action='shift_deleted', week=event_week(week), detail={'shift_id': data['id']})
                 return state_with_week(request, week)
         else: item = Shift(batch='draft')
         item.employee = Employee.objects.get(key=data['employee'])
         item.team = Team.objects.get(key=data['team'])
         item.start, item.end = parsed_time(data['start']), parsed_time(data['end'])
         item.mode = data['mode']
-        if item.start >= item.end or item.end-item.start > timedelta(hours=24) or item.mode not in ('staffed','on_call'): raise ValueError()
+        item.break_minutes = int(data.get('break_minutes', 0))
+        item.location = str(data.get('location', '')).strip()
+        item.role = str(data.get('role', '')).strip()
+        item.notes = str(data.get('notes', '')).strip()
+        if item.start >= item.end or item.end-item.start > timedelta(hours=24) or item.mode not in ('staffed','on_call') or not 0 <= item.break_minutes < (item.end-item.start).total_seconds()/60 or len(item.location)>100 or len(item.role)>80 or len(item.notes)>500: raise ValueError()
         if item.team.skill not in item.employee.skills: return error('Employee lacks the team qualification')
         if unavailable(item.employee, item): return error('Employee is unavailable during this shift')
         monday, beginning, ending = week_bounds(item.start.astimezone(PACIFIC).date().isoformat())
@@ -201,6 +234,7 @@ def shift(request):
         issue = placement_issue(item, peers)
         if issue: return error(issue)
         item.save()
+        ScheduleEvent.objects.create(action='shift_saved', week=monday, detail={'shift_id': item.id, 'employee': item.employee.key})
     except (KeyError, ValueError, TypeError, Shift.DoesNotExist, Employee.DoesNotExist, Team.DoesNotExist): return error('Invalid draft shift: check person, team and times')
     return state_with_week(request, item.start.astimezone(PACIFIC).date())
 
@@ -223,6 +257,7 @@ def team(request):
         record.name, record.skill = name, skill
         record.preferences, record.coverage_template = preferences, template
         record.save()
+        ScheduleEvent.objects.create(action='team_saved', detail={'team': record.key})
     except (KeyError, ValueError, TypeError, AttributeError): return error('Invalid team details or weekly template')
     return state_with_week(request, data.get('week') or date.today())
 
@@ -246,6 +281,7 @@ def person(request):
         record.classification, record.skills = str(data.get('classification','casual')), skills
         record.preferences, record.availability, record.available_windows = preferences, availability, available_windows
         record.save()
+        ScheduleEvent.objects.create(action='person_saved', detail={'person': record.key})
     except (KeyError, ValueError, TypeError, Team.DoesNotExist): return error('Invalid person details, skills or availability')
     return state_with_week(request, data.get('week') or date.today())
 
@@ -282,6 +318,9 @@ def publish(request):
                 if issue:
                     mark(item, issue)
                     mark(other, issue)
+        callout_issues = callout_rest_issues(scheduled, beginning, ending)
+        for item in scheduled:
+            if item.id in callout_issues: mark(item, callout_issues[item.id])
         if blocked:
             details = [{'id': s.id, 'reason': '; '.join(sorted(blocked[s.id]))} for s in scheduled if s.id in blocked]
             return JsonResponse({'error': f'Cannot publish: {len(details)} shift(s) need attention. Highlighted in Schedule.', 'blocked_shifts': details}, status=409)
@@ -289,6 +328,11 @@ def publish(request):
         Shift.objects.filter(batch='published', start__gte=beginning, start__lt=ending).delete()
         draft.update(batch='published')
         Shift.objects.filter(batch='draft', start__gte=beginning, start__lt=ending).update(batch='published', published=True)
+        revision = (Publication.objects.filter(week=monday).aggregate(last=Max('revision'))['last'] or 0)+1
+        current = json.loads(state_with_week(request, monday).content)
+        snapshot = {'week': monday.isoformat(), 'coverage': current['coverage'], 'shifts': current['shifts'], 'absences': current['absences'], 'callouts': current['callouts']}
+        Publication.objects.create(week=monday, revision=revision, snapshot=snapshot)
+        ScheduleEvent.objects.create(action='published', week=monday, detail={'revision': revision, 'shifts': len(scheduled)})
     return state_with_week(request,monday)
 
 def oncall(request):
@@ -305,3 +349,65 @@ def oncall(request):
             if covered < slot.required: gaps.append({'team': slot.team.key, 'start': slot.start.isoformat(), 'end': slot.end.isoformat(), 'missing': slot.required-covered})
         return JsonResponse({'at': now.isoformat(), 'people': [{'id':s.id, 'name':s.employee.name,'phone':s.employee.phone,'team':s.team.key,'start':s.start.isoformat(),'end':s.end.isoformat(),'current':s.start<=now, 'mode':s.mode} for s in upcoming[:8]], 'gaps': gaps[:8]})
     except ValueError: return error('Invalid time')
+
+
+def history(request):
+    try:
+        week = week_bounds(request.GET['week'])[0]
+        versions = Publication.objects.filter(week=week).order_by('-revision')
+        selected = versions.get(revision=int(request.GET['revision'])) if request.GET.get('revision') else versions.first()
+        events = list(ScheduleEvent.objects.filter(Q(week=week)|Q(week__isnull=True)).order_by('-created_at')[:30].values('action','actor','created_at','detail'))
+        previous = versions.filter(revision=selected.revision-1).first() if selected else None
+        def shift_key(item):
+            return tuple(item.get(k) for k in ('employee','team','start','end','mode','break_minutes','location','role','notes'))
+        current_set = {shift_key(x) for x in selected.snapshot.get('shifts',[])} if selected else set()
+        prior_set = {shift_key(x) for x in previous.snapshot.get('shifts',[])} if previous else set()
+        changes = {'added': len(current_set-prior_set), 'removed': len(prior_set-current_set)} if previous else None
+        return JsonResponse({'changes': changes, 'week': week.isoformat(), 'versions': [{'revision': v.revision, 'created_at': v.created_at.isoformat(), 'actor': v.actor} for v in versions], 'snapshot': selected.snapshot if selected else None, 'events': events})
+    except (ValueError, TypeError, Publication.DoesNotExist): return error('Invalid publication revision')
+
+@csrf_exempt
+def absence(request):
+    if not admin_post(request): return error('Alpha admin required', 403)
+    data = body(request)
+    if not isinstance(data, dict): return error('Invalid JSON')
+    try:
+        if data.get('delete'):
+            item = Absence.objects.get(pk=data['id'])
+            week = item.start.astimezone(PACIFIC).date()
+            key = item.employee.key
+            item.delete()
+            ScheduleEvent.objects.create(action='absence_deleted', week=event_week(week), detail={'employee': key})
+            return state_with_week(request, week)
+        employee = Employee.objects.get(key=data['employee'])
+        start, end = parsed_time(data['start']), parsed_time(data['end'])
+        kind = data['kind']
+        note = str(data.get('note', '')).strip()
+        if start >= end or kind not in ('vacation','sick','other') or len(note)>250: raise ValueError()
+        item = Absence.objects.create(employee=employee, start=start, end=end, kind=kind, note=note)
+        week = start.astimezone(PACIFIC).date()
+        ScheduleEvent.objects.create(action='absence_added', week=event_week(week), detail={'id': item.id, 'employee': employee.key, 'kind': kind})
+        return state_with_week(request, week)
+    except (KeyError, ValueError, TypeError, Absence.DoesNotExist, Employee.DoesNotExist): return error('Invalid time off details')
+
+@csrf_exempt
+def callout(request):
+    if not admin_post(request): return error('Alpha admin required', 403)
+    data = body(request)
+    if not isinstance(data, dict): return error('Invalid JSON')
+    try:
+        if data.get('delete'):
+            item = Callout.objects.get(pk=data['id'])
+            week = item.start.astimezone(PACIFIC).date()
+            item.delete()
+            ScheduleEvent.objects.create(action='callout_deleted', week=event_week(week), detail={'id': data['id']})
+            return state_with_week(request, week)
+        standby = Shift.objects.select_related('employee').get(pk=data['shift'], batch='published', mode='on_call')
+        start, end = parsed_time(data['start']), parsed_time(data['end'])
+        note = str(data.get('note','')).strip()
+        if start < standby.start or end > standby.end or start >= end or len(note)>250: raise ValueError()
+        item = Callout.objects.create(standby_shift=standby, employee_key=standby.employee.key, employee_name=standby.employee.name, team_key=standby.team.key, start=start, end=end, note=note)
+        week = start.astimezone(PACIFIC).date()
+        ScheduleEvent.objects.create(action='callout_recorded', week=event_week(week), detail={'id': item.id, 'shift_id': standby.id, 'employee': standby.employee.key})
+        return state_with_week(request, week)
+    except (KeyError, ValueError, TypeError, Shift.DoesNotExist, Callout.DoesNotExist): return error('Invalid standby call-out details')

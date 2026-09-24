@@ -1,4 +1,4 @@
-# Coverage Scheduler — version 0.03 (private alpha)
+# Coverage Scheduler — version 0.04 (private alpha)
 
 Copy `.env.example` to `.env`, choose local secrets, and run `docker compose up --build`. The web port binds to `0.0.0.0:8080` by default; open `http://<server-IP>:8080` from another device. Keep the alpha app behind your LAN/firewall while automatic administrator actions are enabled.
 
@@ -16,6 +16,12 @@ Actual call-outs, on-site standby, meal breaks, overtime/payroll, emergency exce
 
 The API and PostgreSQL remain inside Compose. Production deployment is rejected while alpha automatic admin is enabled.
 
+## Version 0.04
+
+Week navigation, publication snapshots and revision comparison, time off/sick call and actual standby call-out records, editable role/location/break/notes on shifts, basic event history, and backup/restore instructions. Newly recorded absences block conflicting publication; actual call-out work raises rest advisories and blocks conflicting worked shifts on publication. Existing published weeks from before 0.04 are browsable, but have no historical revision snapshots. See `docs/backup-restore.md`.
+
+The alpha still uses automatic administrator access behind a private LAN boundary. Individual access control and employee self-service are scheduled for 0.07. The event actor is therefore the generic alpha administrator; it cannot identify a person until accounts exist. Break minutes are informational and do not reduce calculated coverage until exact break windows are modelled. Actual call-outs do not calculate payroll or certify legal compliance.
+
 ## Version 0.03
 
 The Teams page now shows all teams in one edit list without redundant team or week filters.
@@ -25,6 +31,8 @@ The Teams page now shows all teams in one edit list without redundant team or we
 The On-call contact list includes staffed and standby shifts in chronological vertical order, with handoff details and missing phone indicators. Casual staff can maintain positive availability on a person calendar and preview .ics imports (duplicates and unavailable-time conflicts) before applying. Export writes dated availability events. The import accepts dated VEVENT periods; recurring rules are rejected with an explanation. English Canadian text and formatting are centralized for the new contact view; broader interface translation remains future work.
 
 Version labels use 0.02 for the release; the frontend package uses semantic version 0.0.2. The database migration adds `available_windows` to Employee.
+
+See `ROADMAP.md` for the versioned feature plan.
 
 ## Next work (after 0.02)
 

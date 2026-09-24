@@ -1,6 +1,6 @@
 {
   "name": "coverage-scheduler-alpha",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "type": "module",
   "scripts": {"build": "tsc -b && vite build", "dev": "vite --host 0.0.0.0"},

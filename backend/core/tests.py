@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from django.core.management import call_command
 from django.test import TestCase, override_settings
-from core.models import Team, Employee, CoverageSlot, Shift
+from core.models import Team, Employee, CoverageSlot, Shift, Publication, Callout
 from core.scheduling_rules import placement_issue
 from core.views import demand_coverage
 
@@ -63,6 +63,44 @@ class SchedulingApiTests(TestCase):
         self.assertEqual(['staffed', 'on_call'], [person['mode'] for person in people[:2]])
         self.assertTrue(people[0]['current'])
         self.assertFalse(people[1]['current'])
+
+    def test_generating_another_week_preserves_first_draft(self):
+        first = '2026-09-21'
+        second = '2026-09-28'
+        self.assertEqual(200, self.post('generate', {'week': first}).status_code)
+        first_count = CoverageSlot.objects.filter(batch='draft', start__gte=datetime(2026,9,21,tzinfo=timezone.utc), start__lt=datetime(2026,9,28,tzinfo=timezone.utc)).count()
+        self.assertGreater(first_count, 0)
+        self.assertEqual(200, self.post('generate', {'week': second}).status_code)
+        self.assertEqual('draft', self.client.get('/api/state?week='+first).json()['batch'])
+        self.assertEqual('draft', self.client.get('/api/state?week='+second).json()['batch'])
+
+    def test_publication_revisions_and_week_navigation(self):
+        week = '2026-09-21'
+        self.assertEqual(200, self.post('generate', {'week': week}).status_code)
+        self.assertEqual(200, self.post('publish', {'week': week}).status_code)
+        self.assertEqual(200, self.post('generate', {'week': week}).status_code)
+        self.assertEqual(200, self.post('publish', {'week': week}).status_code)
+        self.assertEqual([2, 1], [v['revision'] for v in self.client.get('/api/history?week='+week).json()['versions']])
+        self.assertIn(week, self.client.get('/api/state?week='+week).json()['published_weeks'])
+        self.assertEqual(2, Publication.objects.filter(week=week).count())
+
+    def test_absence_blocks_publish_and_callout_survives_shift_replacement(self):
+        week = '2026-09-21'
+        self.post('generate', {'week': week})
+        self.post('publish', {'week': week})
+        standby = Shift.objects.filter(batch='published', mode='on_call').first()
+        call = self.post('callout', {'shift': standby.id, 'start': standby.start.isoformat(), 'end': (standby.start+timedelta(hours=1)).isoformat()})
+        self.assertEqual(200, call.status_code)
+        Shift.objects.filter(pk=standby.id).delete()
+        self.assertTrue(Callout.objects.filter(standby_shift__isnull=True, employee_key=standby.employee.key).exists())
+        self.post('generate', {'week': week})
+        item = Shift.objects.filter(batch='draft').first()
+        absent = self.post('absence', {'employee': item.employee.key, 'start': item.start.isoformat(), 'end': item.end.isoformat(), 'kind': 'sick'})
+        self.assertEqual(200, absent.status_code)
+        self.assertTrue(absent.json()['absences'][0]['affected'])
+        blocked = self.post('publish', {'week': week})
+        self.assertEqual(409, blocked.status_code)
+        self.assertIn(item.id, [x['id'] for x in blocked.json()['blocked_shifts']])
 
     def test_publish_identifies_both_conflicting_shift_cards(self):
         week = '2026-09-21'

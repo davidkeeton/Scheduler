@@ -1,8 +1,17 @@
 # Changelog
 
+## 0.04 — 2026-09-23
+
+- Added week navigation, published-week selection and immutable publication snapshots with revision comparisons. Drafts for different weeks now coexist.
+- Added time off, sick call and actual standby call-out records, affected shift flags and publish checks.
+- Added editable shift role, location, unpaid break minutes and notes.
+- Added basic event history and PostgreSQL backup/restore instructions.
+
 ## 0.03 — 2026-09-23
 
 - Simplified Teams management into an all-team list with people and recurring-period counts; removed redundant team/week filters and schedule status on that page.
+- Added team-name search and people search by name, team, or skill.
+- Consolidated the future release plan in `ROADMAP.md`.
 - Added the Skills management section to the future requirements.
 
 ## 0.02 — 2026-09-23
