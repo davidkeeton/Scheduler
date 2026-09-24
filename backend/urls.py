@@ -4,6 +4,7 @@ from core import views
 urlpatterns = [
     path("api/state", views.state),
     path("api/generate", views.generate),
+    path("api/copy-week", views.copy_week),
     path("api/publish", views.publish),
     path("api/oncall", views.oncall),
     path("api/history", views.history),

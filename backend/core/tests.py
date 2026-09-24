@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from core.models import Team, Employee, CoverageSlot, Shift, Publication, Callout
@@ -73,6 +74,43 @@ class SchedulingApiTests(TestCase):
         self.assertEqual(200, self.post('generate', {'week': second}).status_code)
         self.assertEqual('draft', self.client.get('/api/state?week='+first).json()['batch'])
         self.assertEqual('draft', self.client.get('/api/state?week='+second).json()['batch'])
+
+    def test_copy_week_preserves_local_times_details_and_existing_drafts(self):
+        local = ZoneInfo('America/Vancouver')
+        team = Team.objects.get(key='team-1')
+        employee = next(e for e in Employee.objects.filter(team=team) if team.skill in e.skills)
+        start = datetime(2026, 10, 26, 8, 0, tzinfo=local)
+        end = datetime(2026, 10, 26, 16, 0, tzinfo=local)
+        CoverageSlot.objects.create(team=team, start=start, end=end, mode='staffed', required=1, required_skill=team.skill, batch='published')
+        Shift.objects.create(team=team, employee=employee, start=start, end=end, mode='staffed', batch='published', published=True, location='Depot', role='Lead', notes='Handoff', break_minutes=30)
+        payload = {'source_week':'2026-10-26','target_week':'2026-11-02'}
+        preview = self.post('copy-week', {**payload, 'preview': True})
+        self.assertEqual(200, preview.status_code)
+        self.assertEqual((1,1), (preview.json()['coverage'],preview.json()['shifts']))
+        self.assertFalse(Shift.objects.filter(batch='draft').exists())
+        copied = self.post('copy-week', payload)
+        self.assertEqual(200, copied.status_code)
+        item = Shift.objects.get(batch='draft')
+        self.assertEqual((2026,11,2,8), (item.start.astimezone(local).year,item.start.astimezone(local).month,item.start.astimezone(local).day,item.start.astimezone(local).hour))
+        self.assertEqual((item.location,item.role,item.notes,item.break_minutes),('Depot','Lead','Handoff',30))
+        self.assertNotEqual(start.utcoffset(), item.start.astimezone(local).utcoffset())  # DST changes UTC offset
+        self.assertEqual(409,self.post('copy-week',payload).status_code)
+        self.assertEqual(200,self.post('copy-week',{**payload,'replace':True}).status_code)
+        self.assertEqual(1,Shift.objects.filter(batch='draft').count())
+        self.assertEqual(1,Shift.objects.filter(batch='published').count())
+
+    def test_copy_preview_flags_absence_without_mutating_target(self):
+        self.post('generate',{'week':'2026-09-21'})
+        person = Shift.objects.filter(batch='draft').first().employee
+        self.post('absence',{'employee':person.key,'start':'2026-09-28T00:00:00Z','end':'2026-10-05T00:00:00Z','kind':'vacation'})
+        result = self.post('copy-week',{'source_week':'2026-09-21','target_week':'2026-09-28','preview':True})
+        self.assertEqual(200,result.status_code)
+        self.assertTrue(any(x['employee']==person.name and 'unavailable' in x['reason'] for x in result.json()['issues']))
+        self.assertFalse(Shift.objects.filter(batch='draft',start__gte=datetime(2026,9,28,tzinfo=timezone.utc)).exists())
+        applied = self.post('copy-week',{'source_week':'2026-09-21','target_week':'2026-09-28'})
+        self.assertEqual(200, applied.status_code)
+        self.assertTrue(all(item['id'] is not None for item in applied.json()['blocked_shifts']))
+        self.assertEqual(409, self.post('publish',{'week':'2026-09-28'}).status_code)
 
     def test_publication_revisions_and_week_navigation(self):
         week = '2026-09-21'

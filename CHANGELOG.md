@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.04.1 — 2026-09-24
+
+- Added Copy week with source selection, preview, conflict warnings and an explicit target-draft replacement choice.
+- Preserved local wall-clock times across DST and carried Coverage plus shift details together.
+- Added confirmation before resetting a draft.
+
 ## 0.04 — 2026-09-23
 
 - Added week navigation, published-week selection and immutable publication snapshots with revision comparisons. Drafts for different weeks now coexist.

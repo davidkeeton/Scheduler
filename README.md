@@ -1,4 +1,4 @@
-# Coverage Scheduler — version 0.04 (private alpha)
+# Coverage Scheduler — version 0.04.1 (private alpha)
 
 Copy `.env.example` to `.env`, choose local secrets, and run `docker compose up --build`. The web port binds to `0.0.0.0:8080` by default; open `http://<server-IP>:8080` from another device. Keep the alpha app behind your LAN/firewall while automatic administrator actions are enabled.
 
@@ -15,6 +15,10 @@ The pilot checks overlap and eight hours between worked shifts (BC Employment St
 Actual call-outs, on-site standby, meal breaks, overtime/payroll, emergency exceptions, variances, collective agreements and occupational exemptions are not modelled. The application cannot certify legal compliance. Before operational use, record call-outs, assess adjacent weeks and agreements, and review the fuller `docs/scheduler-requirements.xml`. Statute: https://www.bclaws.gov.bc.ca/civix/document/id/complete/statreg/00_96113_01 .
 
 The API and PostgreSQL remain inside Compose. Production deployment is rejected while alpha automatic admin is enabled.
+
+## Version 0.04.1
+
+Use **Copy week…** on Schedule or Coverage to carry a prior draft or published week forward into the selected week. Preview shows counts and assignment conflicts. The copy creates a draft for all teams, preserving employee assignments, Coverage requirements, role, location, notes and break duration at the same local times; elapsed time can change across a daylight-saving transition. An existing target draft requires explicit replacement. Review conflicts and the copied draft before publishing. Reset draft asks for confirmation.
 
 ## Version 0.04
 
