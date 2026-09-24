@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.04.3 — 2026-09-24
+
+- Made Copy week suggest the next week from a populated schedule, or the displayed target from a blank week using the latest earlier scheduled source.
+- Added scheduled-source selection and a configurable one-or-more-week target offset; open the first copied week and retain conflict highlights.
+
+## 0.04.2 — 2026-09-24
+
+- Added one-at-a-time publish conflict review with eligible replacement candidates, home-team priority and Skip.
+- Extended Copy week to repeat at a chosen weekly, monthly or yearly interval and count; preview checks all target weeks and batch application is atomic.
+
 ## 0.04.1 — 2026-09-24
 
 - Added Copy week with source selection, preview, conflict warnings and an explicit target-draft replacement choice.

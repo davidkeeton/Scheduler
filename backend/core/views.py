@@ -81,10 +81,16 @@ def state(request):
     rest_issues = callout_rest_issues(shifts, beginning, ending)
     notices += [{'code': 'callout_rest', 'employee_id': s.employee_id, 'message': rest_issues[s.id]} for s in shifts if s.id in rest_issues]
     published_weeks = sorted({(d.astimezone(PACIFIC).date()-timedelta(days=d.astimezone(PACIFIC).weekday())).isoformat() for d in CoverageSlot.objects.filter(batch='published').values_list('start', flat=True)} | {w.isoformat() for w in Publication.objects.values_list('week', flat=True)})
+    source_map = {}
+    for model in (CoverageSlot, Shift):
+        for kind, instant in model.objects.values_list('batch','start'):
+            key = event_week(instant.astimezone(PACIFIC).date()).isoformat()
+            if kind in ('draft','published') and (key not in source_map or kind == 'draft'): source_map[key] = kind
+    source_weeks = [{'week': key, 'batch': source_map[key]} for key in sorted(source_map, reverse=True)]
     revisions = list(Publication.objects.filter(week=monday).values('id','revision','created_at','actor').order_by('-revision'))
     absences = [{'id': a.id, 'employee': a.employee.key, 'name': a.employee.name, 'start': a.start.isoformat(), 'end': a.end.isoformat(), 'kind': a.kind, 'note': a.note, 'affected': [s.id for s in shifts if s.employee_id == a.employee_id and s.start < a.end and s.end > a.start]} for a in Absence.objects.filter(start__lt=ending, end__gt=beginning).select_related('employee')]
     callouts = [{'id': c.id, 'shift': c.standby_shift_id, 'employee': c.employee_name, 'start': c.start.isoformat(), 'end': c.end.isoformat(), 'note': c.note} for c in Callout.objects.filter(start__lt=ending, end__gt=beginning).select_related('standby_shift__employee')]
-    return JsonResponse({'week': monday.isoformat(), 'published_weeks': published_weeks, 'revisions': revisions, 'absences': absences, 'callouts': callouts, 'batch': batch, 'timezone': 'America/Vancouver', 'rule_profile': 'BC pilot; home/mobile standby assumed', 'advisories': [{'code': n['code'], 'message': f"{names.get(n['employee_id'], 'Employee')}: {n['message']}"} for n in notices],
+    return JsonResponse({'week': monday.isoformat(), 'published_weeks': published_weeks, 'source_weeks': source_weeks, 'revisions': revisions, 'absences': absences, 'callouts': callouts, 'batch': batch, 'timezone': 'America/Vancouver', 'rule_profile': 'BC pilot; home/mobile standby assumed', 'advisories': [{'code': n['code'], 'message': f"{names.get(n['employee_id'], 'Employee')}: {n['message']}"} for n in notices],
         'teams': [{'key': t.key, 'name': t.name, 'skill': t.skill, 'coverage_template': t.coverage_template, 'preferences': t.preferences} for t in Team.objects.order_by('key')],
         'employees': [{'key': e.key, 'name': e.name, 'phone': e.phone, 'team': e.team.key, 'classification': e.classification, 'skills': e.skills, 'preferences': e.preferences, 'availability': e.availability, 'available_windows': e.available_windows} for e in Employee.objects.select_related('team').order_by('key')],
         'coverage': coverage, 'shifts': [{'id': s.id, 'employee': s.employee.key, 'team': s.team.key, 'start': s.start.isoformat(), 'end': s.end.isoformat(), 'mode': s.mode, 'published': s.published, 'cross_team': s.employee.team_id != s.team_id, 'break_minutes': s.break_minutes, 'location': s.location, 'role': s.role, 'notes': s.notes} for s in shifts]})
@@ -475,7 +481,7 @@ def copy_week(request):
         every, count = int(data.get('every',1)), int(data.get('count',1))
         limit = {'week':52,'month':24,'year':5}
         if interval not in limit or not 1<=every<=12 or not 1<=count<=limit[interval]: raise ValueError('Choose a valid interval, step and number of copies')
-        source_batch = 'draft' if CoverageSlot.objects.filter(batch='draft',start__gte=source_begin,start__lt=source_end).exists() else 'published'
+        source_batch = 'draft' if (CoverageSlot.objects.filter(batch='draft',start__gte=source_begin,start__lt=source_end).exists() or Shift.objects.filter(batch='draft',start__gte=source_begin,start__lt=source_end).exists()) else 'published'
         sources = list(CoverageSlot.objects.filter(batch=source_batch,start__gte=source_begin,start__lt=source_end).select_related('team').order_by('start','id'))
         assignments = list(Shift.objects.filter(batch=source_batch,start__gte=source_begin,start__lt=source_end).select_related('employee','employee__team','team').order_by('start','id'))
         if not sources and not assignments: return error('No schedule exists in the source week',404)

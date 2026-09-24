@@ -75,6 +75,23 @@ class SchedulingApiTests(TestCase):
         self.assertEqual('draft', self.client.get('/api/state?week='+first).json()['batch'])
         self.assertEqual('draft', self.client.get('/api/state?week='+second).json()['batch'])
 
+    def test_blank_week_lists_previous_source_and_accepts_copy_into_it(self):
+        source = '2026-09-21'
+        target = '2026-10-12'
+        self.assertEqual(200, self.post('generate', {'week': source}).status_code)
+        blank = self.client.get('/api/state?week='+target).json()
+        self.assertFalse(blank['coverage'])
+        self.assertFalse(blank['shifts'])
+        self.assertIn({'week': source, 'batch': 'draft'}, blank['source_weeks'])
+        preview = self.post('copy-week', {'source_week': source, 'target_week': target, 'preview': True})
+        self.assertEqual(200, preview.status_code)
+        self.assertEqual(target, preview.json()['target_week'])
+        applied = self.post('copy-week', {'source_week': source, 'target_week': target})
+        self.assertEqual(200, applied.status_code)
+        self.assertEqual(target, applied.json()['week'])
+        self.assertTrue(applied.json()['coverage'])
+        self.assertTrue(applied.json()['shifts'])
+
     def test_repeat_preview_detects_boundary_conflicts_between_new_weeks(self):
         local = ZoneInfo('America/Vancouver')
         team = Team.objects.get(key='team-1')

@@ -22,6 +22,10 @@ Copy a prior draft or published week into a new reviewable draft, including Cove
 
 Review publish-blocking shifts one at a time with eligible replacements and Skip; repeat a source schedule into multiple draft weeks at weekly, monthly or yearly intervals with a batch preview and explicit replacement.
 
+## 0.04.3 — Contextual copy defaults (alpha delivered)
+
+Copy the displayed schedule into the next week by default. When the displayed week is empty, select the most recent earlier scheduled week and target the displayed week. Allow another source week and a target one or more weeks later, with preview and conflict highlighting.
+
 ## 0.05 — Scheduler workspace
 
 Make automatic scheduling an explicit workflow rather than a hidden Create draft action. Add team and individual preferred shift durations and patterns (for example 8-hour, 10-hour, or 12-hour shifts); keep allowed minimum/maximum durations as separate hard settings. Compare feasible durations against coverage and explain when the scheduler chooses a less-preferred length. This is distinct from the existing preference for grouping on-call periods. Show candidate shifts, hard-rule exclusions, conflicts, uncovered intervals, selection reasons, and alternatives before publication. Add coverage-by-hour/skill and workload-balance metrics. Show the predicted effect of advice before applying a suggestion; keep manager control over publication. Scheduler settings should default to assigning a team’s own qualified people to its Coverage before borrowing from another team. Make the preference strength configurable. A cross-team assignment remains possible when home-team staff are unavailable or it materially improves coverage, but show the source-team impact and explain the move; avoid unnecessary team transfers.
