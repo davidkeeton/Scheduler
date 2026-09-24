@@ -1,12 +1,39 @@
 import {useState} from 'react';
 
-type Issue={index:number;employee:string;reason:string};
-type Summary={source_week:string;source_batch:string;target_week:string;coverage:number;shifts:number;target_has_draft:boolean;issues:Issue[]};
+type Issue={target_week:string;index:number;employee:string;reason:string};
+type Target={target_week:string;coverage:number;shifts:number;target_has_draft:boolean;issues:Issue[]};
+type Summary={source_week:string;source_batch:string;target_week:string;coverage:number;shifts:number;target_has_draft:boolean;issues:Issue[];targets:Target[];count:number;interval:string;every:number;issue_count:number};
 export type CopiedWeek={copy_summary:Summary;blocked_shifts:{id:number;reason:string}[];[key:string]:unknown};
 type Props={targetWeek:string;onClose:()=>void;onCopied:(result:CopiedWeek)=>void};
 function previousWeek(value:string){const date=new Date(value+'T12:00:00Z');date.setUTCDate(date.getUTCDate()-7);return date.toISOString().slice(0,10)}
 export default function CopyWeekDialog({targetWeek,onClose,onCopied}:Props){
- const [sourceWeek,setSourceWeek]=useState(previousWeek(targetWeek));const [preview,setPreview]=useState<Summary|null>(null);const [replace,setReplace]=useState(false);const [busy,setBusy]=useState(false);const [error,setError]=useState('');
- async function request(apply:boolean){setBusy(true);setError('');try{const response=await fetch('/api/copy-week',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_week:sourceWeek,target_week:targetWeek,preview:!apply,replace})});const result=await response.json();if(!response.ok)throw Error(result.error||'Could not copy week');if(apply)onCopied(result as CopiedWeek);else setPreview(result as Summary)}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
- return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="modal copy-modal" role="dialog" aria-modal="true" aria-label="Copy a schedule week"><div className="modal-head"><h2>Copy a schedule week</h2><button onClick={onClose} aria-label="Close">×</button></div><p className="form-hint">Copy Coverage and employee assignments for all teams into a draft for {targetWeek}. Local start and end times stay the same. The source uses its draft if one exists, otherwise its published schedule.</p><div className="form-grid"><label>Source week<input type="date" value={sourceWeek} onChange={e=>{setSourceWeek(e.target.value);setPreview(null);setReplace(false)}}/></label><label>Target week<input type="date" value={targetWeek} disabled/></label></div><button className="secondary" disabled={busy||!sourceWeek} onClick={()=>request(false)}>Preview copy</button>{error&&<p className="copy-error" role="alert">{error}</p>}{preview&&<div className="copy-preview"><strong>{preview.coverage} Coverage periods · {preview.shifts} shifts</strong><p>Source: {preview.source_week} {preview.source_batch} · Target: {preview.target_week}</p>{preview.target_has_draft&&<label className="copy-replace"><input type="checkbox" checked={replace} onChange={e=>setReplace(e.target.checked)}/> Replace the existing draft for the target week</label>}{preview.issues.length?<div className="copy-issues"><strong>{preview.issues.length} issue(s) to review before publishing</strong>{preview.issues.map((x,i)=><div key={i}>{x.employee}: {x.reason}</div>)}</div>:<p>No assignment conflicts found in the preview.</p>}</div>}<div className="modal-actions"><button className="quiet" onClick={onClose}>Cancel</button><button className="primary" disabled={busy||!preview||(preview.target_has_draft&&!replace)} onClick={()=>request(true)}>Create copied draft</button></div></section></div>;
+ const [sourceWeek,setSourceWeek]=useState(previousWeek(targetWeek));
+ const [interval,setInterval]=useState('week');const [every,setEvery]=useState(1);const [count,setCount]=useState(1);
+ const [preview,setPreview]=useState<Summary|null>(null);const [replace,setReplace]=useState(false);
+ const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+ const clear=()=>{setPreview(null);setReplace(false)};
+ async function request(apply:boolean){
+  setBusy(true);setError('');
+  try{
+   const response=await fetch('/api/copy-week',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_week:sourceWeek,target_week:targetWeek,interval,every,count,preview:!apply,replace})});
+   const result=await response.json();
+   if(!response.ok)throw Error(result.error||'Could not copy schedule');
+   if(apply)onCopied(result as CopiedWeek);else setPreview(result as Summary);
+  }catch(e){setError((e as Error).message)}finally{setBusy(false)}
+ }
+ return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="modal copy-modal" role="dialog" aria-modal="true" aria-label="Copy schedule weeks">
+  <div className="modal-head"><h2>Copy schedule</h2><button onClick={onClose} aria-label="Close">×</button></div>
+  <p className="form-hint">Repeat the source week's Coverage and employee assignments for all teams. Each target becomes a separate draft at the same local shift times. The source uses its draft if one exists, otherwise its published schedule.</p>
+  <div className="form-grid">
+   <label>Source week<input type="date" value={sourceWeek} onChange={e=>{setSourceWeek(e.target.value);clear()}}/></label>
+   <label>First target week<input type="date" value={targetWeek} disabled/></label>
+   <label>Repeat every<input type="number" min="1" max="12" value={every} onChange={e=>{setEvery(Number(e.target.value));clear()}}/></label>
+   <label>Interval<select value={interval} onChange={e=>{setInterval(e.target.value);clear()}}><option value="week">Week</option><option value="month">Month</option><option value="year">Year</option></select></label>
+   <label>Number of copies<input type="number" min="1" max={interval==='week'?52:interval==='month'?24:5} value={count} onChange={e=>{setCount(Number(e.target.value));clear()}}/></label>
+  </div>
+  <button className="secondary" disabled={busy||!sourceWeek||every<1||count<1} onClick={()=>request(false)}>Preview target weeks</button>
+  {error&&<p className="copy-error" role="alert">{error}</p>}
+  {preview&&<div className="copy-preview"><strong>{preview.count} target week(s) · {preview.coverage} Coverage periods · {preview.shifts} shifts</strong><p>Source: {preview.source_week} {preview.source_batch}</p><div className="copy-targets">{preview.targets.map(t=><div key={t.target_week}><strong>{t.target_week}</strong> · {t.coverage} Coverage · {t.shifts} shifts{t.target_has_draft?' · existing draft':''}{t.issues.length?` · ${t.issues.length} issue(s)`:''}</div>)}</div>{preview.target_has_draft&&<label className="copy-replace"><input type="checkbox" checked={replace} onChange={e=>setReplace(e.target.checked)}/> Replace existing drafts in the listed target weeks</label>}{preview.issue_count?<div className="copy-issues"><strong>{preview.issue_count} assignment issue(s) to review</strong>{preview.issues.map((x,i)=><div key={i}>{x.target_week} · {x.employee}: {x.reason}</div>)}</div>:<p>No assignment conflicts found in the preview.</p>}</div>}
+  <div className="modal-actions"><button className="quiet" onClick={onClose}>Cancel</button><button className="primary" disabled={busy||!preview||(preview.target_has_draft&&!replace)} onClick={()=>request(true)}>Create {preview?.count||0} draft week(s)</button></div>
+ </section></div>;
 }

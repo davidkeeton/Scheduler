@@ -75,6 +75,67 @@ class SchedulingApiTests(TestCase):
         self.assertEqual('draft', self.client.get('/api/state?week='+first).json()['batch'])
         self.assertEqual('draft', self.client.get('/api/state?week='+second).json()['batch'])
 
+    def test_repeat_preview_detects_boundary_conflicts_between_new_weeks(self):
+        local = ZoneInfo('America/Vancouver')
+        team = Team.objects.get(key='team-1')
+        person = next(e for e in Employee.objects.filter(team=team) if team.skill in e.skills)
+        monday = datetime(2026,9,21,0,tzinfo=local)
+        sunday = datetime(2026,9,27,16,tzinfo=local)
+        for start,end in ((monday,monday+timedelta(hours=8)),(sunday,sunday+timedelta(hours=8))):
+            Shift.objects.create(team=team,employee=person,start=start,end=end,mode='on_call',batch='published',published=True)
+            CoverageSlot.objects.create(team=team,start=start,end=end,mode='on_call',required=1,required_skill=team.skill,batch='published')
+        result = self.post('copy-week',{'source_week':'2026-09-21','target_week':'2026-09-28','interval':'week','count':2,'preview':True})
+        self.assertEqual(200,result.status_code)
+        self.assertTrue(any('between copied weeks' in x['reason'] for x in result.json()['issues']))
+        self.assertFalse(Shift.objects.filter(batch='draft').exists())
+
+    def test_repeat_copy_is_atomic_and_respects_existing_drafts(self):
+        source = '2026-09-21'
+        self.post('generate', {'week': source})
+        self.post('generate', {'week': '2026-10-05'})
+        payload = {'source_week':source, 'target_week':'2026-09-28', 'interval':'week', 'every':1, 'count':3}
+        preview = self.post('copy-week', {**payload, 'preview':True})
+        self.assertEqual(200, preview.status_code)
+        self.assertEqual(['2026-09-28','2026-10-05','2026-10-12'], [t['target_week'] for t in preview.json()['targets']])
+        self.assertTrue(preview.json()['targets'][1]['target_has_draft'])
+        rejected = self.post('copy-week', payload)
+        self.assertEqual(409, rejected.status_code)
+        self.assertFalse(CoverageSlot.objects.filter(batch='draft',start__gte=datetime(2026,9,28,tzinfo=timezone.utc),start__lt=datetime(2026,10,5,tzinfo=timezone.utc)).exists())
+        applied = self.post('copy-week', {**payload,'replace':True})
+        self.assertEqual(200, applied.status_code)
+        self.assertEqual(3, applied.json()['copy_summary']['count'])
+        for week in ('2026-09-28','2026-10-05','2026-10-12'):
+            self.assertEqual('draft', self.client.get('/api/state?week='+week).json()['batch'])
+        self.assertEqual('draft', self.client.get('/api/state?week='+source).json()['batch'])
+
+    def test_conflict_resolver_lists_eligible_people_and_rechecks_assignment(self):
+        week = '2026-09-21'
+        self.post('generate', {'week':week})
+        item = Shift.objects.filter(batch='draft',mode='staffed').select_related('employee','team').first()
+        self.post('absence',{'employee':item.employee.key,'start':item.start.isoformat(),'end':item.end.isoformat(),'kind':'sick'})
+        result = self.client.get('/api/conflicts?week='+week)
+        self.assertEqual(200,result.status_code)
+        conflict = next(c for c in result.json()['conflicts'] if c['id']==item.id)
+        self.assertIn('unavailable',conflict['reason'])
+        candidates = conflict['candidates']
+        self.assertTrue(candidates)
+        self.assertTrue(all(candidates[i]['home_team_first'] or not candidates[i+1]['home_team_first'] for i in range(len(candidates)-1)))
+        rejected = self.post('resolve-conflict',{'week':week,'shift_id':item.id,'employee':'not-a-person'})
+        self.assertEqual(409,rejected.status_code)
+        applied = self.post('resolve-conflict',{'week':week,'shift_id':item.id,'employee':candidates[0]['key']})
+        self.assertEqual(200,applied.status_code)
+        item.refresh_from_db()
+        self.assertEqual(candidates[0]['key'],item.employee.key)
+
+    def test_resolver_can_report_no_eligible_replacement(self):
+        team = Team.objects.create(key='sole',name='Sole',skill='only-one')
+        person = Employee.objects.create(key='sole-person',name='Sole Person',phone='',team=team,classification='full_time',skills=['only-one'])
+        start = datetime(2026,9,21,16,tzinfo=timezone.utc)
+        shift = Shift.objects.create(team=team,employee=person,start=start,end=start+timedelta(hours=8),mode='staffed',batch='draft')
+        self.post('absence',{'employee':person.key,'start':start.isoformat(),'end':(start+timedelta(hours=8)).isoformat(),'kind':'sick'})
+        conflict = next(c for c in self.client.get('/api/conflicts?week=2026-09-21').json()['conflicts'] if c['id']==shift.id)
+        self.assertEqual([],conflict['candidates'])
+
     def test_copy_week_preserves_local_times_details_and_existing_drafts(self):
         local = ZoneInfo('America/Vancouver')
         team = Team.objects.get(key='team-1')

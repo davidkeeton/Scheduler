@@ -1,4 +1,5 @@
 import json
+import calendar
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -285,6 +286,37 @@ def person(request):
     except (KeyError, ValueError, TypeError, Team.DoesNotExist): return error('Invalid person details, skills or availability')
     return state_with_week(request, data.get('week') or date.today())
 
+def publication_conflicts(beginning, ending):
+    scheduled = list(Shift.objects.filter(batch='draft', start__gte=beginning, start__lt=ending).select_related('employee','team'))
+    surrounding = list(Shift.objects.filter(Q(batch='published') | Q(batch='draft'), start__lt=ending+timedelta(days=2), end__gt=beginning-timedelta(days=2)).exclude(start__gte=beginning, start__lt=ending))
+    blocked = {}
+    def mark(item, reason):
+        blocked.setdefault(item.id, set()).add(reason)
+    for item in scheduled:
+        if item.team.skill not in item.employee.skills: mark(item, 'Required team qualification is missing')
+        if unavailable(item.employee, item): mark(item, 'Employee is unavailable during this shift')
+        issue = placement_issue(item, [])
+        if issue: mark(item, issue)
+        for other in surrounding:
+            if other.employee_id == item.employee_id:
+                issue = placement_issue(item, [other])
+                if issue: mark(item, issue + ' (adjacent published week)')
+    for index, item in enumerate(scheduled):
+        for other in scheduled[index+1:]:
+            if other.employee_id != item.employee_id: continue
+            # Single-shift issues were collected above; only mark both sides
+            # when the combination is the blocker.
+            if placement_issue(item, []) or placement_issue(other, []): continue
+            issue = placement_issue(item, [other])
+            if issue:
+                mark(item, issue)
+                mark(other, issue)
+    callout_issues = callout_rest_issues(scheduled, beginning, ending)
+    for item in scheduled:
+        if item.id in callout_issues: mark(item, callout_issues[item.id])
+    details = [{'id': item.id, 'reason': '; '.join(sorted(blocked[item.id]))} for item in scheduled if item.id in blocked]
+    return scheduled, details
+
 @csrf_exempt
 def publish(request):
     if not admin_post(request): return error('Alpha admin required', 403)
@@ -294,35 +326,8 @@ def publish(request):
     with transaction.atomic():
         draft = CoverageSlot.objects.filter(batch='draft', start__gte=beginning, start__lt=ending)
         if not draft.exists(): return error('Generate a draft for this week first')
-        scheduled = list(Shift.objects.filter(batch='draft', start__lt=ending, end__gt=beginning).select_related('employee','team'))
-        surrounding = list(Shift.objects.filter(batch='published', start__lt=ending+timedelta(days=2), end__gt=beginning-timedelta(days=2)).exclude(start__gte=beginning, start__lt=ending))
-        blocked = {}
-        def mark(item, reason):
-            blocked.setdefault(item.id, set()).add(reason)
-        for item in scheduled:
-            if item.team.skill not in item.employee.skills: mark(item, 'Required team qualification is missing')
-            if unavailable(item.employee, item): mark(item, 'Employee is unavailable during this shift')
-            issue = placement_issue(item, [])
-            if issue: mark(item, issue)
-            for other in surrounding:
-                if other.employee_id == item.employee_id:
-                    issue = placement_issue(item, [other])
-                    if issue: mark(item, issue + ' (adjacent published week)')
-        for index, item in enumerate(scheduled):
-            for other in scheduled[index+1:]:
-                if other.employee_id != item.employee_id: continue
-                # Single-shift issues were collected above; only mark both sides
-                # when the combination is the blocker.
-                if placement_issue(item, []) or placement_issue(other, []): continue
-                issue = placement_issue(item, [other])
-                if issue:
-                    mark(item, issue)
-                    mark(other, issue)
-        callout_issues = callout_rest_issues(scheduled, beginning, ending)
-        for item in scheduled:
-            if item.id in callout_issues: mark(item, callout_issues[item.id])
-        if blocked:
-            details = [{'id': s.id, 'reason': '; '.join(sorted(blocked[s.id]))} for s in scheduled if s.id in blocked]
+        scheduled, details = publication_conflicts(beginning, ending)
+        if details:
             return JsonResponse({'error': f'Cannot publish: {len(details)} shift(s) need attention. Highlighted in Schedule.', 'blocked_shifts': details}, status=409)
         CoverageSlot.objects.filter(batch='published', start__gte=beginning, start__lt=ending).delete()
         Shift.objects.filter(batch='published', start__gte=beginning, start__lt=ending).delete()
@@ -422,51 +427,144 @@ def moved_local_time(value, day_offset):
         raise ValueError('A copied local time does not exist because of a clock change')
     return moved
 
+def repeated_target(first, interval, every, index):
+    if interval == 'week': return first + timedelta(weeks=every*index)
+    months = every*index*(12 if interval == 'year' else 1)
+    month_index = first.year*12+first.month-1+months
+    year, month_zero = divmod(month_index,12)
+    day = min(first.day, calendar.monthrange(year,month_zero+1)[1])
+    return event_week(date(year,month_zero+1,day))
+
+
+def copy_plan(source_week, source_batch, sources, assignments, target_week):
+    _, beginning, ending = week_bounds(target_week.isoformat())
+    existing = (CoverageSlot.objects.filter(batch='draft', start__gte=beginning, start__lt=ending).exists()
+                or Shift.objects.filter(batch='draft', start__gte=beginning, start__lt=ending).exists())
+    offset = (target_week-source_week).days
+    slots = [CoverageSlot(team=x.team, start=moved_local_time(x.start,offset), end=moved_local_time(x.end,offset), mode=x.mode, required=x.required, required_skill=x.required_skill, weight=x.weight, priority=x.priority, batch='draft') for x in sources]
+    shifts = [Shift(team=x.team, employee=x.employee, start=moved_local_time(x.start,offset), end=moved_local_time(x.end,offset), mode=x.mode, break_minutes=x.break_minutes, location=x.location, role=x.role, notes=x.notes, batch='draft') for x in assignments]
+    if any(x.start>=x.end or x.end-x.start>timedelta(hours=24) for x in [*slots,*shifts]):
+        raise ValueError('A copied period has invalid duration after a clock change')
+    outside = list(Shift.objects.filter(batch='published', start__lt=ending+timedelta(days=2), end__gt=beginning-timedelta(days=2)).exclude(start__gte=beginning, start__lt=ending).select_related('employee'))
+    findings = []
+    for i, shift in enumerate(shifts):
+        reasons = []
+        if shift.team.skill not in shift.employee.skills: reasons.append('Required team qualification is missing')
+        if unavailable(shift.employee, shift): reasons.append('Employee is unavailable')
+        peers = [x for x in outside if x.employee_id==shift.employee_id] + [x for j,x in enumerate(shifts) if i!=j and x.employee_id==shift.employee_id]
+        issue = placement_issue(shift, peers)
+        if issue: reasons.append(issue)
+        if shift.mode == 'staffed':
+            for call in Callout.objects.filter(employee_key=shift.employee.key, start__lt=shift.end+timedelta(hours=8), end__gt=shift.start-timedelta(hours=8)):
+                if call.start < shift.end and call.end > shift.start: reasons.append('Worked shift overlaps recorded call-out work')
+                elif timedelta(0) <= shift.start-call.end < timedelta(hours=8) or timedelta(0) <= call.start-shift.end < timedelta(hours=8): reasons.append('Less than 8 hours between a worked shift and recorded call-out work')
+        for reason in reasons: findings.append({'index':i, 'employee':shift.employee.name, 'reason':reason})
+    summary = {'source_week':source_week.isoformat(), 'source_batch':source_batch, 'target_week':target_week.isoformat(), 'coverage':len(slots), 'shifts':len(shifts), 'target_has_draft':existing, 'issues':findings}
+    return summary,slots,shifts
+
+
 @csrf_exempt
 def copy_week(request):
-    if not admin_post(request): return error('Alpha admin required', 403)
+    if not admin_post(request): return error('Alpha admin required',403)
     data = body(request)
-    if not isinstance(data, dict): return error('Invalid JSON')
+    if not isinstance(data,dict): return error('Invalid JSON')
     try:
         source_week, source_begin, source_end = week_bounds(data['source_week'])
-        target_week, target_begin, target_end = week_bounds(data['target_week'])
-        if source_week == target_week: raise ValueError('Choose a different source week')
-        source_batch = 'draft' if CoverageSlot.objects.filter(batch='draft', start__gte=source_begin, start__lt=source_end).exists() else 'published'
-        sources = list(CoverageSlot.objects.filter(batch=source_batch, start__gte=source_begin, start__lt=source_end).select_related('team').order_by('start','id'))
-        assignments = list(Shift.objects.filter(batch=source_batch, start__gte=source_begin, start__lt=source_end).select_related('employee','employee__team','team').order_by('start','id'))
-        if not sources and not assignments: return error('No schedule exists in the source week', 404)
-        existing_draft = (CoverageSlot.objects.filter(batch='draft', start__gte=target_begin, start__lt=target_end).exists() or Shift.objects.filter(batch='draft', start__gte=target_begin, start__lt=target_end).exists())
-        offset = (target_week-source_week).days
-        copies = [CoverageSlot(team=x.team, start=moved_local_time(x.start,offset), end=moved_local_time(x.end,offset), mode=x.mode, required=x.required, required_skill=x.required_skill, weight=x.weight, priority=x.priority, batch='draft') for x in sources]
-        shifts = [Shift(team=x.team, employee=x.employee, start=moved_local_time(x.start,offset), end=moved_local_time(x.end,offset), mode=x.mode, break_minutes=x.break_minutes, location=x.location, role=x.role, notes=x.notes, batch='draft') for x in assignments]
-        if any(x.start>=x.end or x.end-x.start>timedelta(hours=24) for x in [*copies,*shifts]): raise ValueError('A copied period has invalid duration after a clock change')
-        outside = list(Shift.objects.filter(batch='published', start__lt=target_end+timedelta(days=2), end__gt=target_begin-timedelta(days=2)).exclude(start__gte=target_begin, start__lt=target_end).select_related('employee'))
-        findings = []
-        for i, shift in enumerate(shifts):
-            reasons = []
-            if shift.team.skill not in shift.employee.skills: reasons.append('Required team qualification is missing')
-            if unavailable(shift.employee, shift): reasons.append('Employee is unavailable')
-            peers = [x for x in outside if x.employee_id == shift.employee_id] + [x for j,x in enumerate(shifts) if i!=j and x.employee_id==shift.employee_id]
-            issue = placement_issue(shift, peers)
-            if issue: reasons.append(issue)
-            if shift.mode == 'staffed':
-                for call in Callout.objects.filter(employee_key=shift.employee.key, start__lt=shift.end+timedelta(hours=8), end__gt=shift.start-timedelta(hours=8)):
-                    if call.start < shift.end and call.end > shift.start: reasons.append('Worked shift overlaps recorded call-out work')
-                    elif timedelta(0) <= shift.start-call.end < timedelta(hours=8) or timedelta(0) <= call.start-shift.end < timedelta(hours=8): reasons.append('Less than 8 hours between a worked shift and recorded call-out work')
-            for reason in reasons: findings.append({'index': i, 'employee': shift.employee.name, 'reason': reason})
-        summary = {'source_week': source_week.isoformat(), 'source_batch': source_batch, 'target_week': target_week.isoformat(), 'coverage': len(copies), 'shifts': len(shifts), 'target_has_draft': existing_draft, 'issues': findings}
-        if data.get('preview'): return JsonResponse(summary)
-        if existing_draft and not data.get('replace'): return error('Target week has a draft. Review it or explicitly choose Replace draft.',409)
+        first_target = week_bounds(data['target_week'])[0]
+        interval = data.get('interval','week')
+        every, count = int(data.get('every',1)), int(data.get('count',1))
+        limit = {'week':52,'month':24,'year':5}
+        if interval not in limit or not 1<=every<=12 or not 1<=count<=limit[interval]: raise ValueError('Choose a valid interval, step and number of copies')
+        source_batch = 'draft' if CoverageSlot.objects.filter(batch='draft',start__gte=source_begin,start__lt=source_end).exists() else 'published'
+        sources = list(CoverageSlot.objects.filter(batch=source_batch,start__gte=source_begin,start__lt=source_end).select_related('team').order_by('start','id'))
+        assignments = list(Shift.objects.filter(batch=source_batch,start__gte=source_begin,start__lt=source_end).select_related('employee','employee__team','team').order_by('start','id'))
+        if not sources and not assignments: return error('No schedule exists in the source week',404)
+        targets = [repeated_target(first_target,interval,every,i) for i in range(count)]
+        if len(set(targets)) != count or source_week in targets: raise ValueError('Target weeks must be distinct from each other and the source')
+        plans = [copy_plan(source_week,source_batch,sources,assignments,t) for t in targets]
+        summaries = [p[0] for p in plans]
+        # Preview interactions between all newly copied drafts as well as each
+        # target's existing published neighbours.
+        for left_index,(left_summary,_,left_shifts) in enumerate(plans):
+            for right_summary,_,right_shifts in plans[left_index+1:]:
+                if (date.fromisoformat(right_summary['target_week'])-date.fromisoformat(left_summary['target_week'])).days > 14: break
+                for i,left_shift in enumerate(left_shifts):
+                    for j,right_shift in enumerate(right_shifts):
+                        if left_shift.employee_id != right_shift.employee_id or right_shift.start-left_shift.end > timedelta(days=2): continue
+                        issue = placement_issue(left_shift,[right_shift])
+                        if issue:
+                            for summary,index,shift in ((left_summary,i,left_shift),(right_summary,j,right_shift)):
+                                finding = {'index':index,'employee':shift.employee.name,'reason':issue+' (between copied weeks)'}
+                                if finding not in summary['issues']: summary['issues'].append(finding)
+        total_issues = sum(len(x['issues']) for x in summaries)
+        overview = {'source_week':source_week.isoformat(), 'source_batch':source_batch, 'target_week':first_target.isoformat(), 'coverage':sum(x['coverage'] for x in summaries), 'shifts':sum(x['shifts'] for x in summaries), 'target_has_draft':any(x['target_has_draft'] for x in summaries), 'issues':[{'target_week':x['target_week'], **issue} for x in summaries for issue in x['issues']], 'targets':summaries, 'count':count, 'interval':interval, 'every':every, 'issue_count':total_issues}
+        if data.get('preview'): return JsonResponse(overview)
+        if overview['target_has_draft'] and not data.get('replace'): return error('One or more target weeks already have a draft. Choose Replace existing drafts explicitly.',409)
         with transaction.atomic():
-            if existing_draft:
-                CoverageSlot.objects.filter(batch='draft', start__gte=target_begin, start__lt=target_end).delete()
-                Shift.objects.filter(batch='draft', start__gte=target_begin, start__lt=target_end).delete()
-            CoverageSlot.objects.bulk_create(copies)
-            Shift.objects.bulk_create(shifts)
-            ScheduleEvent.objects.create(action='week_copied', week=target_week, detail={'source_week': source_week.isoformat(), 'source_batch': source_batch, 'coverage': len(copies), 'shifts': len(shifts), 'replaced_draft': existing_draft, 'issues': len(findings)})
-        result = json.loads(state_with_week(request, target_week).content)
-        result['copy_summary'] = summary
-        result['blocked_shifts'] = [{'id': shifts[f['index']].id, 'reason': f['reason']} for f in findings]
+            for summary, slots, shifts in plans:
+                target,beginning,ending = week_bounds(summary['target_week'])
+                if summary['target_has_draft']:
+                    CoverageSlot.objects.filter(batch='draft',start__gte=beginning,start__lt=ending).delete()
+                    Shift.objects.filter(batch='draft',start__gte=beginning,start__lt=ending).delete()
+                CoverageSlot.objects.bulk_create(slots)
+                Shift.objects.bulk_create(shifts)
+                ScheduleEvent.objects.create(action='week_copied',week=target,detail={'source_week':source_week.isoformat(),'source_batch':source_batch,'coverage':len(slots),'shifts':len(shifts),'replaced_draft':summary['target_has_draft'],'issues':len(summary['issues'])})
+        result = json.loads(state_with_week(request,first_target).content)
+        result['copy_summary'] = overview
+        result['blocked_shifts'] = [{'id':plans[0][2][issue['index']].id,'reason':issue['reason']} for issue in summaries[0]['issues']]
         return JsonResponse(result)
-    except (KeyError, ValueError, TypeError) as exc:
+    except (KeyError,ValueError,TypeError,OverflowError) as exc:
         return error(str(exc) if str(exc) else 'Valid source and target weeks required')
+
+
+def replacement_candidates(item, beginning, ending):
+    needed_skills = {item.team.skill}
+    needed_skills.update(CoverageSlot.objects.filter(batch='draft', team=item.team, mode=item.mode, start__lt=item.end, end__gt=item.start).exclude(required_skill='').values_list('required_skill',flat=True))
+    others = list(Shift.objects.filter(employee__isnull=False, batch='draft', start__lt=item.end+timedelta(days=2), end__gt=item.start-timedelta(days=2)).exclude(pk=item.pk).select_related('employee'))
+    others += list(Shift.objects.filter(batch='published', start__lt=item.end+timedelta(days=2), end__gt=item.start-timedelta(days=2)).exclude(start__gte=beginning, start__lt=ending).select_related('employee'))
+    candidates = []
+    for employee in Employee.objects.select_related('team').order_by('name'):
+        if employee.pk == item.employee_id or not needed_skills.issubset(set(employee.skills)): continue
+        proposed = Shift(employee=employee, team=item.team, start=item.start, end=item.end, mode=item.mode)
+        if unavailable(employee, proposed): continue
+        if placement_issue(proposed, [peer for peer in others if peer.employee_id==employee.pk]): continue
+        if item.mode == 'staffed' and callout_rest_issues([proposed], beginning, ending): continue
+        candidates.append({'key':employee.key, 'name':employee.name, 'home_team':employee.team.key, 'home_team_first':employee.team_id==item.team_id})
+    return sorted(candidates, key=lambda c:(not c['home_team_first'], c['name']))
+
+
+def conflicts(request):
+    try: monday, beginning, ending = week_bounds(request.GET['week'])
+    except (KeyError, ValueError, TypeError): return error('Valid week required')
+    scheduled, blocked = publication_conflicts(beginning, ending)
+    by_id = {s.id:s for s in scheduled}
+    return JsonResponse({'week':monday.isoformat(), 'conflicts':[
+        {**b, 'employee':by_id[b['id']].employee.name, 'team':by_id[b['id']].team.key, 'start':by_id[b['id']].start.isoformat(), 'end':by_id[b['id']].end.isoformat(), 'candidates':replacement_candidates(by_id[b['id']], beginning, ending)} for b in blocked]})
+
+
+@csrf_exempt
+def resolve_conflict(request):
+    if not admin_post(request): return error('Alpha admin required',403)
+    data = body(request)
+    if not isinstance(data,dict): return error('Invalid JSON')
+    try:
+        monday, beginning, ending = week_bounds(data['week'])
+        with transaction.atomic():
+            item = Shift.objects.select_for_update().select_related('employee','team').get(pk=data['shift_id'],batch='draft',start__gte=beginning,start__lt=ending)
+            _, blockers = publication_conflicts(beginning, ending)
+            if item.id not in {b['id'] for b in blockers}: return error('This shift no longer has a conflict',409)
+            candidates = replacement_candidates(item, beginning, ending)
+            key = data['employee']
+            if key not in {c['key'] for c in candidates}: return error('This person is no longer eligible for the shift',409)
+            previous = item.employee.key
+            item.employee = Employee.objects.get(key=key)
+            item.save(update_fields=['employee'])
+            ScheduleEvent.objects.create(action='conflict_resolved',week=monday,detail={'shift_id':item.id,'from':previous,'to':key})
+        response = json.loads(state_with_week(request,monday).content)
+        response['remaining_conflicts'] = conflicts_for_week(beginning,ending)
+        return JsonResponse(response)
+    except (KeyError,ValueError,TypeError,Shift.DoesNotExist,Employee.DoesNotExist): return error('Invalid conflict or replacement person')
+
+
+def conflicts_for_week(beginning, ending):
+    return publication_conflicts(beginning,ending)[1]

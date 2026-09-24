@@ -1,4 +1,4 @@
-# Coverage Scheduler — version 0.04.1 (private alpha)
+# Coverage Scheduler — version 0.04.2 (private alpha)
 
 Copy `.env.example` to `.env`, choose local secrets, and run `docker compose up --build`. The web port binds to `0.0.0.0:8080` by default; open `http://<server-IP>:8080` from another device. Keep the alpha app behind your LAN/firewall while automatic administrator actions are enabled.
 
@@ -15,6 +15,12 @@ The pilot checks overlap and eight hours between worked shifts (BC Employment St
 Actual call-outs, on-site standby, meal breaks, overtime/payroll, emergency exceptions, variances, collective agreements and occupational exemptions are not modelled. The application cannot certify legal compliance. Before operational use, record call-outs, assess adjacent weeks and agreements, and review the fuller `docs/scheduler-requirements.xml`. Statute: https://www.bclaws.gov.bc.ca/civix/document/id/complete/statreg/00_96113_01 .
 
 The API and PostgreSQL remain inside Compose. Production deployment is rejected while alpha automatic admin is enabled.
+
+## Version 0.04.2
+
+**Resolve conflicts…** on Schedule reviews publish-blocking shifts one at a time. Eligible replacements satisfy team and overlapping Coverage skills, availability, overlap/rest checks, and recorded call-out work; people from the affected team appear first. Assign a person or skip a shift if nobody qualifies. Skipping leaves the conflict unresolved and publication blocked.
+
+**Copy week…** can repeat the same source schedule every N weeks, months, or years for a selected number of target weeks. Preview lists each target, any existing draft, and assignment issues, including conflicts between the newly copied weeks. Monthly and yearly targets use the Monday of the week containing the calendar anniversary of the first target date. Applying the batch is all-or-nothing; replacing existing target drafts requires an explicit choice. Each target remains a separate draft for review and publication.
 
 ## Version 0.04.1
 
